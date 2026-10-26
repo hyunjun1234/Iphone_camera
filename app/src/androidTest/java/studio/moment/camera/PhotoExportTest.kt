@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import studio.moment.camera.color.ColorLut
 import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.data.PhotoStore
+import studio.moment.camera.data.UserMessageException
 import java.io.File
 import kotlin.math.abs
 
@@ -31,6 +32,7 @@ class PhotoExportTest {
         ExifInterface(source).apply {
             setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_ROTATE_90.toString())
             setAttribute(ExifInterface.TAG_MODEL, "Test camera")
+            setLatLong(37.5, 127.0)
             saveAttributes()
         }
         val originalBytes = source.readBytes()
@@ -44,6 +46,7 @@ class PhotoExportTest {
             val exif = context.contentResolver.openInputStream(result.uri).use { ExifInterface(it!!) }
             assertEquals(ExifInterface.ORIENTATION_NORMAL, exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0))
             assertEquals("Test camera", exif.getAttribute(ExifInterface.TAG_MODEL))
+            assertNull(exif.latLong)
             assertTrue(exif.getAttribute(ExifInterface.TAG_SOFTWARE)!!.contains("moment"))
             assertArrayEquals(originalBytes, context.contentResolver.openInputStream(result.original!!).use { it!!.readBytes() })
             assertArrayEquals(originalBytes, source.readBytes())
@@ -52,6 +55,46 @@ class PhotoExportTest {
             result.original?.let { context.contentResolver.delete(it, null, null) }
             source.delete()
         }
+    }
+
+    @Test fun allExifRotationsAndReflectionsProduceUprightPixels() = runBlocking {
+        val store = PhotoStore(context)
+        val colors = intArrayOf(0xFFFF0000.toInt(), 0xFF00FF00.toInt(), 0xFF0000FF.toInt(), 0xFFFFFF00.toInt())
+        val expectedTopLeft = intArrayOf(0, 1, 3, 2, 0, 2, 3, 1)
+        val bitmap = Bitmap.createBitmap(120, 80, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 80) for (x in 0 until 120) bitmap.setPixel(x, y, colors[(if (y < 40) 0 else 2) + if (x < 60) 0 else 1])
+        val source = File.createTempFile("exif-test", ".jpg", context.cacheDir)
+        try {
+            for (orientation in 1..8) {
+                source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it) }
+                ExifInterface(source).apply { setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString()); saveAttributes() }
+                val output = store.thumbnail(source)
+                try {
+                    assertEquals(if (orientation < 5) 120 else 80, output.width)
+                    assertEquals(if (orientation < 5) 80 else 120, output.height)
+                    assertColorClose(colors[expectedTopLeft[orientation - 1]], output.getPixel(20, 20))
+                } finally { output.recycle() }
+            }
+        } finally { bitmap.recycle(); source.delete() }
+    }
+
+    @Test fun transparentImportUsesWhiteBackgroundAndInvalidInputIsRejected() = runBlocking {
+        val source = File.createTempFile("alpha-test", ".png", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        val store = PhotoStore(context)
+        try {
+            val result = store.export(source, ColorLut.identity, GradeSettings(intensity = 0f), false)
+            try {
+                val saved = context.contentResolver.openInputStream(result.uri).use { BitmapFactory.decodeStream(it) }!!
+                assertColorClose(0xFFFFFFFF.toInt(), saved.getPixel(30, 30)); saved.recycle()
+            } finally { context.contentResolver.delete(result.uri, null, null) }
+            source.writeText("not an image")
+            try {
+                store.export(source, ColorLut.identity, GradeSettings(), false)
+                fail("Invalid image must not be published")
+            } catch (e: UserMessageException) { assertTrue(e.message!!.contains("사진")) }
+        } finally { source.delete() }
     }
 
     @Test fun importedPhotoSavesStyleToNewFileAndLeavesSourceUntouched() = runBlocking {

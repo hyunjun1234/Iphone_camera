@@ -15,10 +15,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ImageCapture
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,7 +54,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -71,25 +75,29 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import studio.moment.camera.MomentViewModel
+import studio.moment.camera.MainActivity
 import studio.moment.camera.camera.CameraEngine
 import studio.moment.camera.camera.CaptureMode
 import studio.moment.camera.camera.FrameRatio
+import studio.moment.camera.camera.FocusState
 import studio.moment.camera.color.Looks
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-internal enum class Sheet { LOOKS, TUNE, SETTINGS, MODES }
+internal enum class Sheet { LOOKS, TUNE, SETTINGS, MODES, ABOUT }
 
 @Composable
 fun MomentApp(model: MomentViewModel) = MomentTheme {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val hostView = LocalView.current
+    val textScale = LocalDensity.current.fontScale.coerceIn(1f, 2f)
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val lut by model.lut.collectAsStateWithLifecycle()
     val gradeReady by model.gradeReady.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
+    val stage by model.stage.collectAsStateWithLifecycle()
     val countdown by model.countdown.collectAsStateWithLifecycle()
     val latest by model.latest.collectAsStateWithLifecycle()
     val imported by model.imported.collectAsStateWithLifecycle()
@@ -112,6 +120,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     var focus by remember { mutableStateOf<Offset?>(null) }
     var photoOpen by remember { mutableStateOf(false) }
     var latestBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var latestRefresh by remember { mutableIntStateOf(0) }
     var permission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var requestedPermission by rememberSaveable { mutableStateOf(false) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
@@ -137,17 +146,45 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
         } else { requestedPermission = true; cameraPermission.launch(Manifest.permission.CAMERA) }
     }
 
+    fun triggerShutter() {
+        if (busy || !gradeReady || (imported == null && !status.ready)) return
+        comparing = false
+        engine.setGrade(lut, false)
+        if (prefs.haptics) hostView.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
+        save { if (imported != null) model.saveImport() else model.capture(engine) }
+    }
+
+    val volumeAction by rememberUpdatedState(newValue = {
+        if (!prefs.volumeShutter || imported != null || sheet != null || photoOpen || !permission ||
+            !owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) false
+        else if (countdown > 0) { model.cancelTimer(); true }
+        else if (status.ready) { triggerShutter(); true }
+        else false
+    })
+    DisposableEffect(context) {
+        val activity = context as? MainActivity
+        activity?.onVolumeShutter = { volumeAction() }
+        onDispose { activity?.onVolumeShutter = null }
+    }
+
     LaunchedEffect(Unit) { model.messages.collect { snack.showSnackbar(it) } }
-    LaunchedEffect(lut, comparing) { engine.processor.lut = lut; engine.processor.compareOriginal = comparing }
+    LaunchedEffect(lut, comparing) { engine.setGrade(lut, comparing) }
     LaunchedEffect(permission, front, mode, prefs.ratio, imported, retry) {
         if (permission && imported == null) engine.bind(owner, preview, front, mode, prefs.ratio) else engine.stop()
     }
     LaunchedEffect(flash, status.ready, status.hasFlash) { engine.setFlash(flash) }
     LaunchedEffect(focus) { if (focus != null) { delay(1300); focus = null } }
-    LaunchedEffect(latest) { latestBitmap = latest?.let { model.thumbnail(it) } }
+    LaunchedEffect(latest, latestRefresh) {
+        val uri = latest
+        latestBitmap = uri?.let { model.thumbnail(it) }
+        if (uri != null && latestBitmap == null) { model.forgetMissingPhoto(uri); photoOpen = false }
+    }
     DisposableEffect(owner, engine) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                latestRefresh++
+            }
             if (event == Lifecycle.Event.ON_STOP) { model.cancelTimer(); comparing = false }
         }
         owner.lifecycle.addObserver(observer)
@@ -158,11 +195,12 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     }
 
     Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().height(62.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+            val contentHeight = maxOf(maxHeight, 680.dp * textScale)
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState(), enabled = maxHeight < contentHeight).height(contentHeight)) {
+                Row(Modifier.fillMaxWidth().height(62.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text("moment", fontFamily = FontFamily.Serif, fontSize = 32.sp, letterSpacing = (-1.5).sp, color = Cream)
+                        Text("모먼트", fontFamily = FontFamily.Serif, fontSize = 30.sp, letterSpacing = (-.5).sp, color = Cream)
                         Box(Modifier.padding(start = 5.dp, bottom = 12.dp).size(6.dp).background(Lime, CircleShape))
                     }
                     ToolIcon(Icons.Outlined.AddPhotoAlternate, "사진 가져오기", enabled = !busy) {
@@ -182,7 +220,10 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                 AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
                                 Box(Modifier.fillMaxSize()
                                     .pointerInput(status.ready, busy) {
-                                        detectTapGestures { point -> if (status.ready && !busy) { engine.focus(preview, point.x, point.y); focus = point } }
+                                        detectTapGestures(
+                                            onTap = { point -> if (status.ready && !busy) { engine.focus(preview, point.x, point.y); focus = point } },
+                                            onLongPress = { point -> if (status.ready && !busy) { engine.focus(preview, point.x, point.y, lock = true); focus = point } },
+                                        )
                                     }
                                     .pointerInput(status.ready, busy) {
                                         detectTransformGestures { _, _, zoom, _ -> if (status.ready && !busy) engine.zoom(engine.status.value.zoom * zoom) }
@@ -190,7 +231,8 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                 if (prefs.grid && status.ready) GridOverlay()
                                 focus?.let { point -> Canvas(Modifier.fillMaxSize()) {
                                     val side = 66.dp.toPx()
-                                    drawRoundRect(Lime, Offset(point.x - side / 2, point.y - side / 2), Size(side, side),
+                                    drawRoundRect(if (status.focus == FocusState.FAILED) Color(0xFFF2A99D) else if (status.focus == FocusState.FOCUSING) Cream else Lime,
+                                        Offset(point.x - side / 2, point.y - side / 2), Size(side, side),
                                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f), style = Stroke(1.5.dp.toPx()))
                                 } }
                                 if (!status.ready && status.error == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -198,7 +240,15 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                 }
                                 status.error?.let { error -> CameraMessage("카메라를 열지 못했어요", error, "다시 시도", { retry++ }) }
                             }
-                            else -> PermissionScene { requestCamera() }
+                            else -> PermissionScene(permissionDenied) { requestCamera() }
+                        }
+                        if (status.focus == FocusState.LOCKED && imported == null) TextButton(
+                            onClick = engine::unlockFocus, enabled = !busy,
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp).background(Color.Black.copy(alpha = .5f), RoundedCornerShape(50)),
+                        ) { Icon(Icons.Outlined.Lock, null, Modifier.size(14.dp)); Text(" 초점 고정 해제", fontSize = 11.sp) }
+                        if (imported != null && !gradeReady) Box(Modifier.align(Alignment.TopEnd).padding(12.dp)
+                            .background(Color.Black.copy(alpha = .65f), RoundedCornerShape(12.dp)).padding(10.dp)) {
+                            Text("색감을 적용하는 중이에요", color = Cream, fontSize = 11.sp)
                         }
                         if (permission && imported == null && status.ready) {
                             Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .5f), Color.Transparent))).padding(8.dp),
@@ -220,7 +270,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .55f)))).padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(if (comparing) "ORIGINAL" else "iPhone ${Looks.find(prefs.grade.lookId).model}", color = Cream,
+                                Text(if (comparing) "원본" else "아이폰 ${Looks.find(prefs.grade.lookId).model} 스타일", color = Cream,
                                     fontSize = 12.sp, letterSpacing = .7.sp, modifier = Modifier.padding(start = 4.dp))
                                 CompareButton(onCompare = { comparing = it })
                             }
@@ -231,31 +281,31 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(45.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(Modifier.fillMaxWidth().height(45.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     if (imported == null) {
                         TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
                             Box(Modifier.size(5.dp).background(if (status.ready) Lime else Muted, CircleShape))
                             Text("  ${status.activeMode.label}", fontSize = 12.sp, color = Cream)
                             Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(Modifier.weight(1f).padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
                             zooms.take(5).forEach { zoom ->
                                 val selected = abs(status.zoom - zoom) < .08f
                                 TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
                                     modifier = Modifier.height(36.dp).widthIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 7.dp),
                                     colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Muted)) {
-                                    Text("${formatZoom(zoom)}×", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                                    Text("${formatZoom(zoom)}배", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                                 }
                             }
                         }
-                    } else Text("사진에 색감 입히기", color = Muted, fontSize = 12.sp)
-                    Text("${(prefs.grade.intensity * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
+                    } else Text("가져온 사진 편집", color = Muted, fontSize = 12.sp)
+                    Text(if (imported == null && status.ready) "${formatZoom(status.zoom)}배" else "강도 ${(prefs.grade.intensity * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
                 }
                 LookStrip(prefs.grade.lookId, !busy, model::selectLook)
-                Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
-                        Text("${Looks.find(prefs.grade.lookId).title}  ", color = Muted, fontSize = 12.sp)
+                Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * textScale).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f)) {
+                        Text("${Looks.find(prefs.grade.lookId).title}  ", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
                         Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
                     }
                     TextButton(onClick = { sheet = Sheet.TUNE }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
@@ -263,7 +313,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         Text("  색감 조절", color = Lime, fontSize = 12.sp)
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(96.dp).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().height(96.dp * textScale).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(13.dp))
                         .clickable(enabled = !busy, role = Role.Button, onClick = {
                             if (latest != null) photoOpen = true else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -272,26 +322,24 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         else Icon(Icons.Outlined.PhotoLibrary, null, tint = Muted)
                     }
                     Shutter(enabled = !busy && gradeReady && (status.ready || imported != null), busy = busy, countdown = countdown,
-                        importing = imported != null, onClick = {
-                            if (prefs.haptics) hostView.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
-                            save { if (imported != null) model.saveImport() else model.capture(engine, front) }
-                        })
+                        importing = imported != null, onClick = ::triggerShutter)
                     ToolIcon(if (imported != null) Icons.Outlined.Close else Icons.Outlined.Cameraswitch,
                         if (imported != null) "사진 편집 닫기" else "카메라 전환", enabled = !busy && (imported != null || status.hasFront && status.hasBack)) {
-                        if (imported != null) model.closeImport() else front = !front
+                        if (imported != null) model.closeImport() else front = !status.frontFacing
                     }
                 }
-                Text(if (busy && countdown == 0) "순간을 담는 중…" else "YOUR MOMENT, YOUR TONE.", color = Muted.copy(alpha = .65f),
-                    fontSize = 9.sp, letterSpacing = 2.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
+                Text(if (busy) stage.label else if (imported != null) "저장하면 새 사진이 만들어져요" else "화면을 길게 누르면 초점을 고정할 수 있어요", color = Muted,
+                    fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
             }
             SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(12.dp))
         }
         sheet?.let { selected ->
             MomentSheet(selected, prefs, status, imported != null, onDismiss = { sheet = null }, onUpdate = model::update,
-                onLook = model::selectLook, onMode = { mode = it; sheet = null }, onExposure = engine::exposure)
+                onLook = model::selectLook, onMode = { mode = it; sheet = null }, onExposure = engine::exposure,
+                onAbout = { sheet = Sheet.ABOUT })
         }
         if (photoOpen && latest != null) PhotoDialog(latest!!, latestBitmap, { photoOpen = false }) { intent ->
-            runCatching { context.startActivity(intent) }.onFailure { model.notice("사진을 열 수 있는 앱이 없어요.") }
+            runCatching { context.startActivity(intent) }.onFailure { model.notice("사진을 열지 못했어요. 갤러리에서 사진이 삭제되지 않았는지 확인해 주세요.") }
         }
     }
 }
@@ -299,17 +347,18 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 @Composable
 private fun LookStrip(selected: String, enabled: Boolean, onSelect: (String) -> Unit) {
     val state = rememberLazyListState()
+    val textScale = LocalDensity.current.fontScale.coerceIn(1f, 2f)
     LaunchedEffect(selected) { state.animateScrollToItem((Looks.all.indexOfFirst { it.id == selected } - 1).coerceAtLeast(0)) }
     LazyRow(state = state, contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(Looks.all, key = { it.id }) { look ->
             val active = look.id == selected
-            Column(Modifier.width(if (look.model.length > 3) 96.dp else 77.dp).height(78.dp).clip(RoundedCornerShape(15.dp))
+            Column(Modifier.width((if (look.model.length > 3) 96.dp else 77.dp) * textScale).height(78.dp * textScale).clip(RoundedCornerShape(15.dp))
                 .background(if (active) Color(look.swatch) else Panel)
                 .border(1.dp, if (active) Color(look.swatch) else Line, RoundedCornerShape(15.dp))
                 .clickable(enabled = enabled, role = Role.RadioButton) { onSelect(look.id) }
-                .semantics { contentDescription = "iPhone ${look.model}, ${look.title}${if (active) ", 선택됨" else ""}" }
+                .semantics { contentDescription = "아이폰 ${look.model} 스타일${if (active) ", 선택됨" else ""}" }
                 .padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                Text("iPhone", fontSize = 9.sp, color = if (active) Ink.copy(alpha = .65f) else Muted)
+                Text("아이폰 스타일", fontSize = 9.sp, maxLines = 1, color = if (active) Ink.copy(alpha = .65f) else Muted)
                 Text(look.model, fontFamily = FontFamily.Serif, fontSize = if (look.model.length > 3) 24.sp else 29.sp,
                     color = if (active) Ink else Cream, letterSpacing = (-.7).sp)
             }
@@ -321,7 +370,7 @@ private fun LookStrip(selected: String, enabled: Boolean, onSelect: (String) -> 
 private fun Shutter(enabled: Boolean, busy: Boolean, countdown: Int, importing: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(80.dp).border(1.5.dp, if (enabled || busy) Cream else Line, CircleShape).padding(6.dp)
         .clip(CircleShape).background(if (enabled) Cream else Panel).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .semantics { contentDescription = if (importing) "색감 적용해서 저장" else "사진 촬영" }, contentAlignment = Alignment.Center) {
+        .testTag("shutter").semantics { contentDescription = if (importing) "편집한 사진 저장" else "사진 촬영" }, contentAlignment = Alignment.Center) {
         when {
             busy && countdown == 0 -> CircularProgressIndicator(color = Lime, modifier = Modifier.size(25.dp), strokeWidth = 2.dp)
             importing -> Icon(Icons.Outlined.Check, null, tint = if (enabled) Ink else Muted, modifier = Modifier.size(29.dp))
@@ -379,7 +428,7 @@ private fun GridOverlay() {
 }
 
 @Composable
-private fun PermissionScene(onPermission: () -> Unit) {
+private fun PermissionScene(denied: Boolean, onPermission: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF303B2A), Color(0xFF20291E), Color(0xFF171F16))))) {
         Canvas(Modifier.fillMaxSize()) {
             drawCircle(Color(0xFFD9CFAD).copy(alpha = .14f), radius = size.width * .28f, center = Offset(size.width * .74f, size.height * .3f))
@@ -389,12 +438,12 @@ private fun PermissionScene(onPermission: () -> Unit) {
         Column(Modifier.align(Alignment.Center).padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Outlined.CameraAlt, null, tint = Lime, modifier = Modifier.size(32.dp))
             Spacer(Modifier.height(20.dp))
-            Text("평범한 순간도,\n좋아하는 색으로.", color = Cream, fontFamily = FontFamily.Serif, fontSize = 25.sp, lineHeight = 36.sp, textAlign = TextAlign.Center)
+            Text("좋아하는 색감으로\n촬영해 보세요", color = Cream, fontFamily = FontFamily.Serif, fontSize = 25.sp, lineHeight = 36.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(12.dp))
-            Text("카메라를 열고 나만의 분위기를 찾아보세요.", fontSize = 11.sp, color = Cream.copy(alpha = .65f), textAlign = TextAlign.Center)
+            Text(if (denied) "카메라 권한을 허용하거나\n위쪽 버튼으로 사진을 가져오세요." else "촬영하려면 카메라 권한이 필요해요.\n사진을 가져와 편집할 수도 있어요.", fontSize = 12.sp, lineHeight = 19.sp, color = Cream.copy(alpha = .8f), textAlign = TextAlign.Center)
             Spacer(Modifier.height(22.dp))
             Button(onClick = onPermission, colors = ButtonDefaults.buttonColors(containerColor = Lime), shape = RoundedCornerShape(50)) {
-                Text("카메라 시작하기", color = Ink, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                Text(if (denied) "카메라 권한 확인" else "카메라 사용하기", color = Ink, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
             }
         }
     }
@@ -416,13 +465,14 @@ private fun PhotoDialog(uri: Uri, bitmap: Bitmap?, onDismiss: () -> Unit, launch
     Dialog(onDismissRequest = onDismiss) {
         Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("방금 담은 순간", color = Cream, modifier = Modifier.weight(1f))
+                Text("최근 저장한 사진", color = Cream, modifier = Modifier.weight(1f))
                 ToolIcon(Icons.Outlined.Close, "닫기", onClick = onDismiss)
             }
             bitmap?.let { Image(it.asImageBitmap(), "최근 저장한 사진", Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 TextButton(onClick = { launch(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }) { Text("갤러리에서 열기") }
-                TextButton(onClick = { launch(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "사진 공유")) }) {
+                TextButton(onClick = { launch(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, uri)
+                    .apply { clipData = android.content.ClipData.newRawUri("사진", uri) }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "사진 공유")) }) {
                     Icon(Icons.Outlined.IosShare, null, Modifier.size(17.dp)); Text("  공유")
                 }
             }

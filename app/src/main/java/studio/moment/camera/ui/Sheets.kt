@@ -1,5 +1,7 @@
 package studio.moment.camera.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -14,6 +16,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -28,6 +34,8 @@ import studio.moment.camera.camera.CaptureMode
 import studio.moment.camera.camera.FrameRatio
 import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.color.Looks
+import studio.moment.camera.color.evidence
+import studio.moment.camera.BuildConfig
 import studio.moment.camera.data.Preferences
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -44,15 +52,30 @@ internal fun MomentSheet(
     onLook: (String) -> Unit,
     onMode: (CaptureMode) -> Unit,
     onExposure: (Float) -> Unit,
+    onAbout: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Panel, contentColor = Cream,
         scrimColor = if (sheet == Sheet.TUNE) Color.Transparent else Color.Black.copy(alpha = .45f),
         dragHandle = { BottomSheetDefaults.DragHandle(color = Line) }) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 30.dp)) {
+        val sheetView = LocalView.current
+        SideEffect {
+            (sheetView.parent as? DialogWindowProvider)?.window?.let { window ->
+                WindowCompat.getInsetsController(window, sheetView).apply {
+                    isAppearanceLightStatusBars = false
+                    isAppearanceLightNavigationBars = false
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
+            }
+        }
+        val scroll = key(sheet) { rememberScrollState() }
+        Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(horizontal = 24.dp).padding(bottom = 30.dp)) {
             when (sheet) {
                 Sheet.LOOKS -> {
-                    SheetTitle("Find your tone.", "같은 순간, 여덟 가지 분위기")
+                    SheetTitle("스타일 선택", "원하는 색감을 골라 보세요")
+                    Text("아이폰 기종에서 영감을 받아 만든 스타일이에요. 실제 기기의 색감을 측정해 재현한 결과는 아니에요.",
+                        color = Muted, fontSize = 12.sp, lineHeight = 19.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    TextButton(onClick = onAbout, contentPadding = PaddingValues(0.dp)) { Text("스타일 제작 정보", fontSize = 12.sp) }
                     Looks.all.forEach { look ->
                         val selected = look.id == preferences.grade.lookId
                         Row(Modifier.fillMaxWidth().padding(bottom = 9.dp).clip(RoundedCornerShape(17.dp))
@@ -63,7 +86,7 @@ internal fun MomentSheet(
                             }
                             Column(Modifier.weight(1f).padding(horizontal = 13.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("iPhone ${look.model}", color = Cream, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    Text("아이폰 ${look.model} 스타일", color = Cream, fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                                     Text("  ${look.year}", color = Muted, fontSize = 10.sp)
                                 }
                                 Text(look.title, color = Color(look.swatch), fontSize = 12.sp, modifier = Modifier.padding(top = 3.dp))
@@ -72,11 +95,11 @@ internal fun MomentSheet(
                             if (selected) Icon(Icons.Outlined.CheckCircle, "선택됨", tint = Lime, modifier = Modifier.size(19.dp))
                         }
                     }
-                    Footnote("각 모델에서 영감을 받은 색감이에요. 기기와 빛에 따라 결과는 달라질 수 있어요.")
+                    Footnote("스타일을 바꾸면 강도와 온도, 톤도 해당 스타일의 기본값으로 돌아가요.")
                 }
                 Sheet.TUNE -> {
                     var adjustment by remember { mutableIntStateOf(0) }
-                    SheetTitle("Make it yours.", "iPhone ${Looks.find(preferences.grade.lookId).model} · ${Looks.find(preferences.grade.lookId).title}")
+                    SheetTitle("색감 조절", "아이폰 ${Looks.find(preferences.grade.lookId).model} 스타일")
                     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val tabs = listOf("강도", "온도", "톤") + if (!importing && camera.maxEv > camera.minEv) listOf("노출") else emptyList()
                         tabs.forEachIndexed { index, label ->
@@ -99,20 +122,20 @@ internal fun MomentSheet(
                         TextButton(onClick = { onUpdate { it.copy(grade = GradeSettings(lookId = it.grade.lookId)) }; if (!importing) onExposure(0f) }) {
                             Icon(Icons.Outlined.RestartAlt, null, Modifier.size(18.dp)); Text("  초기화")
                         }
-                        Button(onClick = onDismiss, shape = RoundedCornerShape(50)) { Text("이 색감으로", modifier = Modifier.padding(horizontal = 12.dp)) }
+                        Button(onClick = onDismiss, shape = RoundedCornerShape(50)) { Text("완료", modifier = Modifier.padding(horizontal = 12.dp)) }
                     }
                 }
                 Sheet.MODES -> {
-                    SheetTitle("Capture the light.", "이 카메라에서 사용할 수 있는 촬영 모드")
+                    SheetTitle("촬영 모드", "현재 카메라가 지원하는 모드를 확인하세요")
                     CaptureMode.entries.forEach { mode ->
                         val available = mode in camera.availableModes
                         val selected = mode == camera.activeMode
                         val description = when (mode) {
-                            CaptureMode.STANDARD -> "기본 촬영과 실시간 색감"
-                            CaptureMode.AUTO -> "장면에 맞춰 제조사 처리를 자동 선택"
-                            CaptureMode.HDR -> "밝은 곳과 어두운 곳의 디테일을 함께"
-                            CaptureMode.NIGHT -> "어두운 순간도 밝게 · 잠시 고정해 주세요"
-                            CaptureMode.PORTRAIT -> "인물은 또렷하게, 배경은 부드럽게"
+                            CaptureMode.STANDARD -> "자동으로 초점과 밝기를 맞춰 촬영해요"
+                            CaptureMode.AUTO -> "장면에 맞춰 휴대폰의 추가 보정을 사용해요"
+                            CaptureMode.HDR -> "밝은 부분과 어두운 부분을 함께 살려요"
+                            CaptureMode.NIGHT -> "어두운 곳에서 여러 장을 합쳐 밝게 촬영해요"
+                            CaptureMode.PORTRAIT -> "인물을 중심으로 배경을 흐리게 표현해요"
                         }
                         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(15.dp))
                             .background(if (selected) Line else Ink.copy(alpha = .3f)).clickable(enabled = available) { onMode(mode) }
@@ -125,14 +148,16 @@ internal fun MomentSheet(
                             else if (!available) Text("미지원", color = Muted.copy(alpha = .5f), fontSize = 11.sp)
                         }
                     }
-                    Footnote("지원 모드는 휴대폰과 전·후면 카메라에 따라 달라요. 삼성 기본 카메라의 전용 기능이 필요하면, 촬영한 사진을 가져와 색감을 적용해 보세요.")
+                    Footnote("야간 촬영은 시간이 걸릴 수 있어요. 저장 안내가 나올 때까지 휴대폰을 움직이지 마세요.")
+                    Footnote("지원 모드는 휴대폰과 카메라에 따라 달라요. 기본 카메라의 전용 기능으로 촬영한 사진도 가져와 편집할 수 있어요.")
                 }
                 Sheet.SETTINGS -> {
-                    SheetTitle("A little more you.", "나의 카메라 설정")
-                    SettingSwitch("격자", "화면을 9등분해 구도를 맞춰요", preferences.grid) { value -> onUpdate { it.copy(grid = value) } }
-                    SettingSwitch("원본도 저장", "촬영 원본을 moment / Originals에 보관해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
-                    SettingSwitch("셀피 좌우 반전", "미리보기에서 보이는 방향으로 저장해요", preferences.mirrorSelfie) { value -> onUpdate { it.copy(mirrorSelfie = value) } }
-                    SettingSwitch("셔터 진동", "촬영 버튼을 누르면 가볍게 알려줘요", preferences.haptics) { value -> onUpdate { it.copy(haptics = value) } }
+                    SheetTitle("설정", "촬영과 저장 방식을 선택하세요")
+                    SettingSwitch("격자", "구도를 맞추는 안내선을 표시해요", preferences.grid) { value -> onUpdate { it.copy(grid = value) } }
+                    SettingSwitch("원본도 저장", "색감을 적용하기 전 사진도 별도로 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
+                    SettingSwitch("셀피 좌우 반전", "앞면 카메라 사진을 화면에 보이는 방향으로 저장해요", preferences.mirrorSelfie) { value -> onUpdate { it.copy(mirrorSelfie = value) } }
+                    SettingSwitch("촬영 버튼 진동", "촬영 버튼을 누를 때 짧게 진동해요", preferences.haptics) { value -> onUpdate { it.copy(haptics = value) } }
+                    SettingSwitch("볼륨 버튼으로 촬영", "촬영 화면에서 볼륨 버튼을 셔터로 사용해요", preferences.volumeShutter) { value -> onUpdate { it.copy(volumeShutter = value) } }
                     HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 18.dp))
                     Text("촬영 비율", color = Cream, fontSize = 14.sp)
                     Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -149,11 +174,28 @@ internal fun MomentSheet(
                     HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 22.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(6.dp).background(Lime, CircleShape))
-                        Text("  사진은 내 휴대폰 안에", color = Cream, fontSize = 13.sp)
+                        Text("  사진은 기기에서 처리해요", color = Cream, fontSize = 13.sp)
                     }
-                    Footnote("모든 색감 처리는 기기에서 이뤄져요. 사진을 서버에 보내지 않아요. 선택한 모델과 설정은 다음에도 기억해요.")
-                    Text("moment  0.1", fontFamily = FontFamily.Serif, fontSize = 23.sp, color = Muted, modifier = Modifier.padding(top = 17.dp))
-                    Footnote("iPhone에서 영감을 받은 독립적인 카메라 앱입니다. Apple 및 Samsung의 공식 앱이 아니며, 기종의 카메라 처리 전체를 재현하지 않습니다.")
+                    Footnote("모먼트는 사진을 서버로 전송하지 않아요. 선택한 스타일과 설정은 다음 실행에도 유지돼요.")
+                    TextButton(onClick = onAbout, contentPadding = PaddingValues(0.dp), modifier = Modifier.padding(top = 14.dp)) { Text("앱 정보와 기능 안내") }
+                    Text("모먼트 ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = Muted)
+                }
+                Sheet.ABOUT -> {
+                    SheetTitle("앱 정보", "스타일 제작 방식과 촬영 기능을 확인하세요")
+                    InfoText("스타일 제작 방식", "현재 스타일은 온도와 채도, 명암을 직접 조정해 만들었어요. 실제 아이폰 사진을 측정해 만든 값은 아니에요.")
+                    InfoText("참고 자료의 범위", "애플 공식 문서는 카메라 사양을 확인하는 데 사용했어요. 촬영 리뷰에서는 조명에 따른 색과 화이트밸런스를 참고할 수 있지만, 이 자료가 앱의 보정 수치를 검증해 주는 것은 아니에요.")
+                    val look = Looks.find(preferences.grade.lookId)
+                    val evidence = look.evidence()
+                    Text("현재 선택한 아이폰 ${look.model} 스타일의 참고 자료", color = Cream, fontSize = 13.sp, modifier = Modifier.padding(top = 16.dp))
+                    SourceButton("애플 공식 카메라 사양", evidence.specification)
+                    SourceButton("디엑스오마크 ${evidence.reviewModel} 촬영 리뷰", evidence.review)
+                    if (look.id == "xs") Footnote("이 리뷰의 시험 기기는 XS Max예요. XS를 직접 시험한 자료와 구분해서 참고해야 해요.")
+                    InfoText("사용할 수 있는 촬영 기능", "사진 촬영, 전후면 전환, 줌, 터치 초점, 초점 고정, 노출 조절, 플래시, 타이머를 제공해요. 실제 지원 범위는 현재 카메라에서 확인하며, 지원하지 않는 기능은 사용할 수 없어요.")
+                    InfoText("휴대폰 기본 카메라와의 차이", "HDR과 야간 촬영, 인물 사진은 지원되는 기기에서 사용할 수 있어요. 배율을 높여도 반드시 망원 렌즈로 전환되는 것은 아니에요. 동영상, 연속 촬영, 파노라마, 수동 ISO와 셔터 속도, RAW 촬영은 제공하지 않아요.")
+                    InfoText("사진 저장", "편집한 사진은 최대 약 1,600만 화소의 JPG로 저장해요. 큰 사진이나 메모리가 부족한 기기에서는 해상도가 낮아질 수 있어요. 가져온 사진의 비율은 그대로 유지돼요. 투명한 부분에는 흰 배경을 넣어 색감을 적용해요. 원본의 HDR 정보와 RAW 데이터는 JPG에 유지되지 않아요.")
+                    InfoText("사진과 개인정보", "카메라 권한은 촬영에 사용해요. 가져오기는 직접 선택한 사진에만 접근해요. 앱의 색감 처리는 기기에서 이뤄지며 별도 서버나 분석 서비스로 사진을 전송하지 않아요. 갤러리 앱의 클라우드 동기화와 공유 기능은 해당 서비스 설정을 따라요.")
+                    InfoText("사진에 포함된 정보", "편집본에는 촬영 기기와 노출 정보 등이 남을 수 있어요. 편집본에는 위치 정보를 복사하지 않지만, 별도 보관한 원본에는 기존 정보가 유지돼요. 사진은 갤러리에서 삭제할 수 있어요.")
+                    Footnote("모먼트는 애플이나 삼성의 공식 앱이 아니에요. 모델 이름은 스타일의 영감을 설명하기 위해 사용해요.")
                 }
             }
         }
@@ -205,3 +247,19 @@ private fun Choice(title: String, selected: Boolean, modifier: Modifier, onClick
 private fun Footnote(text: String) { Text(text, color = Muted, fontSize = 11.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 12.dp)) }
 
 private fun signed(value: Float) = String.format(Locale.US, "%+d", value.roundToInt())
+
+@Composable
+private fun InfoText(title: String, body: String) {
+    Text(title, color = Cream, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 18.dp))
+    Text(body, color = Muted, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 7.dp))
+}
+
+@Composable
+private fun SourceButton(label: String, url: String) {
+    val context = LocalContext.current
+    var unavailable by remember { mutableStateOf(false) }
+    TextButton(onClick = { unavailable = runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }.isFailure }, contentPadding = PaddingValues(0.dp)) {
+        Text(label, fontSize = 12.sp)
+    }
+    if (unavailable) Text("링크를 열 수 있는 브라우저가 없어요.", color = Muted, fontSize = 11.sp)
+}
