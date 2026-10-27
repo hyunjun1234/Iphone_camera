@@ -3,6 +3,7 @@ package studio.moment.camera.ui
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -73,7 +74,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -138,7 +138,6 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     fun endComparison() { compareLocked = false; comparePressed = false }
     fun selectLook(id: String) { endComparison(); model.selectLook(id) }
     var focus by remember { mutableStateOf<Offset?>(null) }
-    var photoOpen by remember { mutableStateOf(false) }
     var latestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var latestRefresh by remember { mutableIntStateOf(0) }
     var permission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
@@ -175,7 +174,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     }
 
     val volumeAction by rememberUpdatedState(newValue = {
-        if (!prefs.volumeShutter || imported != null || tuning || sheet != null || photoOpen || !permission ||
+        if (!prefs.volumeShutter || imported != null || tuning || sheet != null || !permission ||
             !owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) false
         else if (countdown > 0) { model.cancelTimer(); true }
         else if (status.ready) { triggerShutter(); true }
@@ -199,7 +198,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     LaunchedEffect(latest, latestRefresh) {
         val uri = latest
         latestBitmap = uri?.let { model.thumbnail(it) }
-        if (uri != null && latestBitmap == null) { model.forgetMissingPhoto(uri); photoOpen = false }
+        if (uri != null && latestBitmap == null) model.forgetMissingPhoto(uri)
     }
     DisposableEffect(owner, engine) {
         val observer = LifecycleEventObserver { _, event ->
@@ -235,7 +234,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         translationX = if (tuning) displayedFrame.left - normal.left * scale else 0f
                         translationY = if (tuning) displayedFrame.top - normal.top * scale else 0f
                     })
-                CameraSurround(displayedFrame, if (tuning) 1f else .10f)
+                CameraSurround(displayedFrame, if (tuning) 1f else .40f)
             }
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp * textScale else 480.dp))
@@ -413,7 +412,16 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                     Row(Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(13.dp))
                             .clickable(enabled = !busy, role = Role.Button, onClick = {
-                                if (latest != null) photoOpen = true else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                val uri = latest
+                                if (uri == null) picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                else try {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*")
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                                } catch (_: ActivityNotFoundException) {
+                                    model.notice("사진을 열 수 있는 갤러리 앱이 없어요.")
+                                } catch (_: Exception) {
+                                    model.notice("사진을 열지 못했어요. 갤러리에서 사진이 삭제되지 않았는지 확인해 주세요.")
+                                }
                             }).semantics { contentDescription = if (latest != null) "최근 사진" else "사진 가져오기" }, contentAlignment = Alignment.Center) {
                             if (latestBitmap != null) Image(latestBitmap!!.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             else Icon(Icons.Outlined.PhotoLibrary, null, tint = Muted)
@@ -439,9 +447,6 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
             MomentSheet(selected, prefs, status, onDismiss = { sheet = null }, onUpdate = model::update,
                 onLook = ::selectLook, onMode = { mode = it; sheet = null },
                 onAbout = { sheet = Sheet.ABOUT })
-        }
-        if (photoOpen && latest != null) PhotoDialog(latest!!, latestBitmap, { photoOpen = false }) { intent ->
-            runCatching { context.startActivity(intent) }.onFailure { model.notice("사진을 열지 못했어요. 갤러리에서 사진이 삭제되지 않았는지 확인해 주세요.") }
         }
     }
 }
@@ -584,26 +589,6 @@ private fun CameraMessage(title: String, body: String, action: String, onClick: 
         Text(title, color = Cream, fontSize = 18.sp)
         Text(body, color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 12.dp))
         TextButton(onClick) { Text(action) }
-    }
-}
-
-@Composable
-private fun PhotoDialog(uri: Uri, bitmap: Bitmap?, onDismiss: () -> Unit, launch: (Intent) -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Panel).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("최근 저장한 사진", color = Cream, modifier = Modifier.weight(1f))
-                ToolIcon(Icons.Outlined.Close, "닫기", onClick = onDismiss)
-            }
-            bitmap?.let { Image(it.asImageBitmap(), "최근 저장한 사진", Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(onClick = { launch(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }) { Text("갤러리에서 열기") }
-                TextButton(onClick = { launch(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, uri)
-                    .apply { clipData = android.content.ClipData.newRawUri("사진", uri) }.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "사진 공유")) }) {
-                    Icon(Icons.Outlined.IosShare, null, Modifier.size(17.dp)); Text("  공유")
-                }
-            }
-        }
     }
 }
 
