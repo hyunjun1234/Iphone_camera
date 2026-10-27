@@ -2,7 +2,7 @@
 
 아이폰 기종에서 영감을 얻은 색감을 골라 사진을 찍고 편집하는 안드로이드 앱입니다. 화면과 안내 문구는 한국어로 제공하며 Android 8.0(API 26) 이상에서 실행할 수 있습니다. Kotlin, Jetpack Compose, CameraX로 만들었습니다.
 
-테스트 파일은 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.1)에서 받을 수 있습니다. Play Console에는 [서명된 AAB](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.aab)를 업로드하고, 휴대폰에 직접 설치하려면 [APK](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.apk)를 사용하세요.
+Play Console에 올릴 [서명된 AAB를 다운로드하세요](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.2/moment-0.2.2-4.aab). 현재 버전은 `0.2.2`, 버전 코드는 `4`입니다. **App Bundle 업로드란에는 이 `.aab` 파일 하나만 선택하세요.** APK는 휴대폰 직접 설치용 파일입니다. 배포 파일과 설명은 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.2)에서 확인할 수 있습니다.
 
 현재 색감은 직접 조정한 프리셋입니다. 실제 아이폰 사진에서 측정한 보정값은 아닙니다. [자료 출처와 한계](docs/COLOR_EVIDENCE.md)에 사양 조사, 촬영 리뷰, 앱에서 정한 수치를 구분해 정리했습니다.
 
