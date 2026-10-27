@@ -130,12 +130,12 @@ class CameraFlowTest {
         prefs.edit().clear().putBoolean("original", false).putInt("timer", 10).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             waitForCamera()
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_VOLUME_DOWN)
+            sendCameraKey(compose, scenario, KeyEvent.KEYCODE_VOLUME_DOWN)
             compose.onNodeWithText("탭하여 취소").assertIsDisplayed()
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_VOLUME_DOWN)
+            sendCameraKey(compose, scenario, KeyEvent.KEYCODE_VOLUME_DOWN)
             waitForCamera()
             assertNull(prefs.getString("latest", null))
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_VOLUME_UP)
+            sendCameraKey(compose, scenario, KeyEvent.KEYCODE_VOLUME_UP)
             compose.onNodeWithText("탭하여 취소").assertIsDisplayed()
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
@@ -144,7 +144,7 @@ class CameraFlowTest {
             assertNull(prefs.getString("latest", null))
             // 10 seconds cycles back to off. Capture with the physical volume key.
             compose.onNodeWithContentDescription("타이머 10초").performClick()
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_VOLUME_UP)
+            sendCameraKey(compose, scenario, KeyEvent.KEYCODE_VOLUME_UP)
             compose.waitUntil(30_000) { prefs.getString("latest", null) != null }
             val uri = Uri.parse(prefs.getString("latest", null))
             assertNotNull(context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) })

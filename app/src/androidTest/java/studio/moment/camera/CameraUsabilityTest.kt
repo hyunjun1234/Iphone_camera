@@ -79,7 +79,7 @@ class CameraUsabilityTest {
             compose.onNodeWithTag("style-toggle").performClick()
             compose.onNodeWithTag("style-picker").assertIsDisplayed()
             compose.waitForIdle()
-            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            sendCameraKey(compose, scenario, android.view.KeyEvent.KEYCODE_BACK)
             compose.onNodeWithTag("style-picker").assertDoesNotExist()
             waitForCamera()
             scenario.recreate()
@@ -164,7 +164,7 @@ class CameraUsabilityTest {
                 assertEquals(2f, preview.width / preview.height, .01f)
                 setSlider(.5f)
                 // Back closes tuning, keeping the selected photo open for saving.
-                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                sendCameraKey(compose, scenario, android.view.KeyEvent.KEYCODE_BACK)
                 compose.waitUntil(15_000) {
                     compose.onAllNodes(hasContentDescription("편집한 사진 저장") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
                 }
