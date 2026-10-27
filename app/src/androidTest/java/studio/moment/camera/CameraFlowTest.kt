@@ -7,6 +7,8 @@ import android.net.Uri
 import android.view.KeyEvent
 import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -85,13 +87,15 @@ class CameraFlowTest {
         instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
         val prefs = context.getSharedPreferences("moment", Context.MODE_PRIVATE)
         prefs.edit().clear().putBoolean("original", false).commit()
-        ActivityScenario.launch(MainActivity::class.java).use {
+        val saved = mutableListOf<Uri>()
+        try { ActivityScenario.launch(MainActivity::class.java).use {
             waitForCamera()
             val scene = compose.onNodeWithTag("camera-scene").fetchSemanticsNode().boundsInRoot
             val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
             assertEquals(root, scene)
             for ((label, ratio) in listOf("3:4" to .75f, "9:16" to .5625f, "1:1" to 1f)) {
                 compose.onNodeWithContentDescription("사진 비율 $label").assertIsDisplayed()
+                waitForCamera()
                 val frame = compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot
                 val shutter = compose.onNodeWithTag("shutter").fetchSemanticsNode().boundsInRoot
                 assertTrue(scene.contains(frame.center))
@@ -100,19 +104,22 @@ class CameraFlowTest {
                 assertEquals(ratio, frame.width / frame.height, .005f)
                 assertEquals(scene, compose.onNodeWithTag("camera-scene").fetchSemanticsNode().boundsInRoot)
                 val previous = prefs.getString("latest", null)
-                compose.onNodeWithContentDescription("사진 촬영").performClick()
-                compose.waitUntil(30_000) { prefs.getString("latest", null) != previous }
-                val uri = Uri.parse(prefs.getString("latest", null))
+                compose.onNodeWithContentDescription("사진 촬영").assertIsEnabled().performClick()
                 try {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
-                    assertTrue(bounds.outWidth > 0)
-                    assertEquals("Saved crop for $label", ratio, bounds.outWidth.toFloat() / bounds.outHeight, .005f)
-                } finally { context.contentResolver.delete(uri, null, null) }
+                    compose.waitUntil(30_000) { prefs.getString("latest", null)?.let { it != previous } == true }
+                } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+                    throw AssertionError("Photo was not saved for $label.\n${compose.onRoot().printToString()}", failure)
+                }
+                val uri = Uri.parse(prefs.getString("latest", null))
+                saved += uri
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
+                assertTrue(bounds.outWidth > 0)
+                assertEquals("Saved crop for $label", ratio, bounds.outWidth.toFloat() / bounds.outHeight, .005f)
                 waitForCamera()
                 compose.onNodeWithContentDescription("사진 비율 $label").performClick()
             }
-        }
+        } } finally { saved.forEach { context.contentResolver.delete(it, null, null) } }
     }
 
     @Test fun volumeShutterAndTimerCancellationSurviveBackgrounding() {

@@ -429,7 +429,10 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 
                 }
             }
-            SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+            // Saving feedback must not intercept the next shutter or ratio selection.
+            SnackbarHost(snack, Modifier.align(if (tuning) Alignment.BottomCenter else Alignment.TopCenter)
+                .padding(horizontal = 12.dp)
+                .padding(top = if (tuning) 0.dp else 56.dp, bottom = if (tuning) 12.dp else 0.dp))
         }
         }
         sheet?.let { selected ->
