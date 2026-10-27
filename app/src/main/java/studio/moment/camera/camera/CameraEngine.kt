@@ -172,13 +172,19 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
             info.zoomState.observe(owner) { zoom -> if (version == generation) {
                 mutableStatus.value = mutableStatus.value.copy(zoom = zoom.zoomRatio, minZoom = zoom.minZoomRatio, maxZoom = zoom.maxZoomRatio)
             } }
+            // PreviewView can still report STREAMING for the previous surface just after
+            // rebinding. Wait for its idle transition before enabling the new shutter.
+            var sawPreviewIdle = view.previewStreamState.value == PreviewView.StreamState.IDLE
+            var streaming = false
             info.cameraState.observe(owner) { state -> if (version == generation) {
                 if (state.error != null) mutableStatus.value = mutableStatus.value.copy(ready = false,
                     error = "카메라를 사용할 수 없어요. 다른 카메라 앱을 닫은 뒤 다시 시도해 주세요.")
-                else if (state.type != CameraState.Type.OPEN) mutableStatus.value = mutableStatus.value.copy(ready = false)
+                else mutableStatus.value = mutableStatus.value.copy(ready = streaming && state.type == CameraState.Type.OPEN && mutableStatus.value.error == null)
             } }
             view.previewStreamState.observe(owner) { stream -> if (version == generation) {
-                mutableStatus.value = mutableStatus.value.copy(ready = stream == PreviewView.StreamState.STREAMING && mutableStatus.value.error == null)
+                if (stream == PreviewView.StreamState.IDLE) sawPreviewIdle = true
+                streaming = sawPreviewIdle && stream == PreviewView.StreamState.STREAMING
+                mutableStatus.value = mutableStatus.value.copy(ready = streaming && info.cameraState.value?.type == CameraState.Type.OPEN && mutableStatus.value.error == null)
             } }
             resumeZoom = if (previous.frontFacing == actualFront) previous.zoom else 1f
             resumeEv = if (previous.frontFacing == actualFront) previous.ev else 0f

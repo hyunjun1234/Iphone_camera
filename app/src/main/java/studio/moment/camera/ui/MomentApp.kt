@@ -15,7 +15,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.ImageCapture
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +59,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -83,7 +83,6 @@ import studio.moment.camera.camera.FocusState
 import studio.moment.camera.color.Looks
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 internal enum class Sheet { LOOKS, SETTINGS, MODES, ABOUT }
 
@@ -113,6 +112,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     val snack = remember { SnackbarHostState() }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var tuning by rememberSaveable { mutableStateOf(false) }
+    var stylesExpanded by rememberSaveable { mutableStateOf(false) }
     var front by rememberSaveable { mutableStateOf(false) }
     var mode by rememberSaveable { mutableStateOf(CaptureMode.AUTO) }
     var flash by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
@@ -195,36 +195,49 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer); engine.close() }
     }
-    BackHandler(tuning || countdown > 0 || imported != null) {
+    BackHandler(tuning || stylesExpanded || countdown > 0 || imported != null) {
         when {
             tuning -> { tuning = false; endComparison() }
             countdown > 0 -> model.cancelTimer()
+            stylesExpanded -> stylesExpanded = false
             else -> { endComparison(); model.closeImport() }
         }
     }
 
-    Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
+    Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-            val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp else 680.dp) * textScale)
+            val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp * textScale else 480.dp))
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState(), enabled = maxHeight < contentHeight).height(contentHeight)) {
-                Row(Modifier.fillMaxWidth().height((if (tuning) 48.dp else 62.dp) * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (tuning) "색감 조절" else "모먼트", fontFamily = FontFamily.Serif, fontSize = if (tuning) 22.sp else 30.sp, letterSpacing = (-.5).sp, color = Cream)
-                        if (!tuning) Box(Modifier.padding(start = 5.dp, bottom = 12.dp).size(6.dp).background(Lime, CircleShape))
-                    }
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     if (tuning) {
+                        Text("색감 조절", fontSize = 20.sp, color = Cream, modifier = Modifier.weight(1f).padding(start = 12.dp))
                         TextButton(onClick = { tuning = false; endComparison() }) { Text("완료", color = Lime) }
                     } else {
+                        if (imported == null) {
+                            GlassIcon(when (flash) { ImageCapture.FLASH_MODE_ON -> Icons.Outlined.FlashOn; ImageCapture.FLASH_MODE_AUTO -> Icons.Outlined.FlashAuto; else -> Icons.Outlined.FlashOff },
+                                "플래시 ${when (flash) { ImageCapture.FLASH_MODE_ON -> "켜짐"; ImageCapture.FLASH_MODE_AUTO -> "자동"; else -> "꺼짐" }}", status.ready && status.hasFlash && !busy, flash != ImageCapture.FLASH_MODE_OFF) {
+                                flash = when (flash) { ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO; ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON; else -> ImageCapture.FLASH_MODE_OFF }
+                            }
+                            GlassText(prefs.ratio.label, "사진 비율", !busy) { model.update { it.copy(ratio = FrameRatio.entries[(it.ratio.ordinal + 1) % FrameRatio.entries.size]) } }
+                            val cycleTimer = {
+                                model.update { it.copy(timer = when (it.timer) { 0 -> 3; 3 -> 10; else -> 0 }) }
+                            }
+                            if (prefs.timer == 0) GlassIcon(Icons.Outlined.Timer, "타이머", !busy, false, cycleTimer)
+                            else GlassText("${prefs.timer}초", "타이머", !busy, cycleTimer)
+                        } else {
+                            Text("사진 편집", color = Cream, fontSize = 18.sp, modifier = Modifier.weight(1f).padding(start = 12.dp))
+                        }
                         ToolIcon(Icons.Outlined.AddPhotoAlternate, "사진 가져오기", enabled = !busy) {
                             picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         }
                         ToolIcon(Icons.Outlined.Tune, "설정", enabled = !busy) { sheet = Sheet.SETTINGS }
                     }
                 }
-                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     val frameRatio = importedOriginal?.takeIf { imported != null }?.let { it.width.toFloat() / it.height } ?: prefs.ratio.value
                     val frameWidth = minOf(maxWidth, maxHeight * frameRatio)
-                    Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview").clip(RoundedCornerShape(22.dp)).background(Panel)) {
+                    Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview").clip(RoundedCornerShape(0.dp)).background(Panel)) {
                         when {
                             imported != null -> {
                                 val bitmap = if (comparing) importedOriginal else importedPreview ?: importedOriginal
@@ -258,47 +271,66 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         }
                         if (!tuning && status.focus == FocusState.LOCKED && imported == null) TextButton(
                             onClick = engine::unlockFocus, enabled = !busy,
-                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp).background(Color.Black.copy(alpha = .5f), RoundedCornerShape(50)),
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).background(Color.Black.copy(alpha = .5f), RoundedCornerShape(50)),
                         ) { Icon(Icons.Outlined.Lock, null, Modifier.size(14.dp)); Text(" 초점 고정 해제", fontSize = 11.sp) }
                         if (imported != null && !gradeReady) Box(Modifier.align(Alignment.TopEnd).padding(12.dp)
                             .background(Color.Black.copy(alpha = .65f), RoundedCornerShape(12.dp)).padding(10.dp)) {
                             Text("색감을 적용하는 중이에요", color = Cream, fontSize = 11.sp)
-                        }
-                        if (!tuning && permission && imported == null && status.ready) {
-                            Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .5f), Color.Transparent))).padding(8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                GlassIcon(when (flash) { ImageCapture.FLASH_MODE_ON -> Icons.Outlined.FlashOn; ImageCapture.FLASH_MODE_AUTO -> Icons.Outlined.FlashAuto; else -> Icons.Outlined.FlashOff },
-                                    "플래시 ${when (flash) { ImageCapture.FLASH_MODE_ON -> "켜짐"; ImageCapture.FLASH_MODE_AUTO -> "자동"; else -> "꺼짐" }}", status.hasFlash && !busy, flash != ImageCapture.FLASH_MODE_OFF) {
-                                    flash = when (flash) { ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO; ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON; else -> ImageCapture.FLASH_MODE_OFF }
-                                }
-                                GlassText(prefs.ratio.label, "사진 비율", !busy) { model.update { it.copy(ratio = FrameRatio.entries[(it.ratio.ordinal + 1) % FrameRatio.entries.size]) } }
-                                GlassText(if (prefs.timer == 0) "타이머" else "${prefs.timer}초", "타이머", !busy) {
-                                    model.update { it.copy(timer = when (it.timer) { 0 -> 3; 3 -> 10; else -> 0 }) }
-                                }
-                            }
                         }
                         if (!tuning && imported != null) IconButton(onClick = { endComparison(); model.closeImport() }, enabled = !busy, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color.Black.copy(alpha = .4f), CircleShape)) {
                             Icon(Icons.Outlined.Close, "가져온 사진 닫기", tint = Cream)
                         }
                         if (!tuning && (status.ready || imported != null)) {
                             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .55f)))).padding(12.dp),
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .55f)))).padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(if (comparing) "원본" else "아이폰 ${Looks.find(prefs.grade.lookId).model} 스타일", color = Cream,
-                                    fontSize = 12.sp, letterSpacing = .7.sp, modifier = Modifier.padding(start = 4.dp))
+                                Row(Modifier.weight(1f).padding(end = 8.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                                    if (imported == null) {
+                                        val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
+                                        zooms.take(5).forEach { zoom ->
+                                            val selected = abs(status.zoom - zoom) < .08f
+                                            TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
+                                                modifier = Modifier.height(48.dp).widthIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 8.dp),
+                                                colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Cream)) {
+                                                Text("${formatZoom(zoom)}배", fontSize = 12.sp, maxLines = 1, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                                            }
+                                        }
+                                    }
+                                }
                                 CompareButton(comparing, !busy, onToggle = { compareLocked = !compareLocked }, onPress = { comparePressed = it })
                             }
                         }
+                        if (busy && countdown == 0) Text(stage.label, color = Cream, fontSize = 12.sp,
+                            modifier = Modifier.align(Alignment.TopCenter).padding(12.dp)
+                                .background(Color.Black.copy(alpha = .65f), RoundedCornerShape(50)).padding(horizontal = 16.dp, vertical = 8.dp))
                         if (countdown > 0) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .18f)).clickable(onClick = model::cancelTimer), contentAlignment = Alignment.Center) {
                             Text(countdown.toString(), fontFamily = FontFamily.Serif, fontSize = 100.sp, color = Cream)
                             Text("탭하여 취소", color = Cream, fontSize = 12.sp, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 70.dp))
+                        }
+                    }
+                    if (!tuning && stylesExpanded && !busy) {
+                        Surface(color = Color.Black.copy(alpha = .88f), shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 8.dp)
+                                .padding(bottom = minOf((maxHeight - frameWidth / frameRatio) / 2f + 72.dp, maxHeight - 128.dp))
+                                .fillMaxWidth().testTag("style-picker").pointerInput(Unit) { detectTapGestures { } }) {
+                            Column(Modifier.padding(bottom = 12.dp)) {
+                                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                                    TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy) {
+                                        Text("스타일 설명", fontSize = 12.sp)
+                                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(16.dp))
+                                    }
+                                    ToolIcon(Icons.Outlined.Close, "스타일 닫기") { stylesExpanded = false }
+                                }
+                                LookStrip(prefs.grade.lookId, !busy, ::selectLook)
+                            }
                         }
                     }
                 }
                 if (tuning) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp * textScale).padding(horizontal = 20.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(if (comparing) "원본" else "아이폰 ${Looks.find(prefs.grade.lookId).model} 스타일", color = Cream,
+                        Text(if (comparing) "원본" else "색감 적용", color = Cream,
                             fontSize = 12.sp, modifier = Modifier.weight(1f).padding(end = 8.dp))
                         CompareButton(comparing, status.ready || imported != null,
                             onToggle = { compareLocked = !compareLocked }, onPress = { comparePressed = it })
@@ -307,39 +339,31 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         onUpdate = { change -> endComparison(); model.update(change) },
                         onExposure = { value -> endComparison(); engine.exposure(value) })
                 } else {
-                    Row(Modifier.fillMaxWidth().height(45.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         if (imported == null) {
-                            TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                Box(Modifier.size(5.dp).background(if (status.ready) Lime else Muted, CircleShape))
-                                Text("  ${status.activeMode.label}", fontSize = 12.sp, color = Cream)
-                                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
+                            TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy,
+                                contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text(status.activeMode.label, fontSize = 12.sp, maxLines = 1, color = Lime)
+                                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Lime)
                             }
-                            Row(Modifier.weight(1f).padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
-                                zooms.take(5).forEach { zoom ->
-                                    val selected = abs(status.zoom - zoom) < .08f
-                                    TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
-                                        modifier = Modifier.height(36.dp).widthIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 7.dp),
-                                        colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Muted)) {
-                                        Text("${formatZoom(zoom)}배", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                                    }
-                                }
-                            }
-                        } else Text("가져온 사진 편집", color = Muted, fontSize = 12.sp)
-                        Text(if (imported == null && status.ready) "${formatZoom(status.zoom)}배" else "강도 ${(prefs.grade.intensity * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
-                    }
-                    LookStrip(prefs.grade.lookId, !busy, ::selectLook)
-                    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * textScale).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f)) {
-                            Text("${Looks.find(prefs.grade.lookId).title}  ", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
-                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
                         }
-                        TextButton(onClick = { endComparison(); tuning = true }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
-                            Icon(Icons.Outlined.Tune, null, Modifier.size(15.dp), tint = Lime)
-                            Text("  색감 조절", color = Lime, fontSize = 12.sp)
+                        TextButton(onClick = { stylesExpanded = !stylesExpanded }, enabled = !busy,
+                            modifier = Modifier.testTag("style-toggle").semantics {
+                                contentDescription = "스타일 선택"
+                                stateDescription = if (stylesExpanded) "펼쳐짐" else "접힘"
+                            }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("스타일", color = if (stylesExpanded) Lime else Cream, fontSize = 12.sp, maxLines = 1)
+                            Icon(if (stylesExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                null, Modifier.size(18.dp), tint = if (stylesExpanded) Lime else Cream)
+                        }
+                        TextButton(onClick = { endComparison(); stylesExpanded = false; tuning = true }, enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp), tint = Cream)
+                            Text("  색감 조절", color = Cream, fontSize = 12.sp, maxLines = 1)
                         }
                     }
-                    Row(Modifier.fillMaxWidth().height(96.dp * textScale).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(13.dp))
                             .clickable(enabled = !busy, role = Role.Button, onClick = {
                                 if (latest != null) photoOpen = true else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -355,8 +379,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                             if (imported != null) model.closeImport() else front = !status.frontFacing
                         }
                     }
-                    Text(if (busy) stage.label else if (imported != null) "저장하면 새 사진이 만들어져요" else "화면을 길게 누르면 초점을 고정할 수 있어요", color = Muted,
-                        fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
+
                 }
             }
             SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(12.dp))
@@ -380,15 +403,15 @@ private fun LookStrip(selected: String, enabled: Boolean, onSelect: (String) -> 
     LazyRow(state = state, contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(Looks.all, key = { it.id }) { look ->
             val active = look.id == selected
-            Column(Modifier.width((if (look.model.length > 3) 96.dp else 77.dp) * textScale).height(78.dp * textScale).clip(RoundedCornerShape(15.dp))
+            Row(Modifier.widthIn(min = (if (look.model.length > 3) 96.dp else 64.dp) * textScale).height(52.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(if (active) Color(look.swatch) else Panel)
-                .border(1.dp, if (active) Color(look.swatch) else Line, RoundedCornerShape(15.dp))
+                .border(1.dp, if (active) Color(look.swatch) else Line, RoundedCornerShape(14.dp))
                 .clickable(enabled = enabled, role = Role.RadioButton) { onSelect(look.id) }
-                .semantics { contentDescription = "아이폰 ${look.model} 스타일${if (active) ", 선택됨" else ""}" }
-                .padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                Text("아이폰 스타일", fontSize = 9.sp, maxLines = 1, color = if (active) Ink.copy(alpha = .65f) else Muted)
-                Text(look.model, fontFamily = FontFamily.Serif, fontSize = if (look.model.length > 3) 24.sp else 29.sp,
-                    color = if (active) Ink else Cream, letterSpacing = (-.7).sp)
+                .semantics { contentDescription = "${look.model}${if (active) ", 선택됨" else ""}" }
+                .padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                Text(look.model, fontSize = 18.sp, maxLines = 1,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal, color = if (active) Ink else Cream)
             }
         }
     }
@@ -410,10 +433,7 @@ private fun Shutter(enabled: Boolean, busy: Boolean, countdown: Int, importing: 
     Box(Modifier.size(80.dp).border(1.5.dp, if (enabled || busy) Cream else Line, CircleShape).padding(6.dp)
         .clip(CircleShape).background(if (enabled) Cream else Panel).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .testTag("shutter").semantics { contentDescription = "사진 촬영" }, contentAlignment = Alignment.Center) {
-        when {
-            busy && countdown == 0 -> CircularProgressIndicator(color = Lime, modifier = Modifier.size(25.dp), strokeWidth = 2.dp)
-            else -> Box(Modifier.size(8.dp).background(if (enabled) Ink else Muted, CircleShape))
-        }
+        if (busy && countdown == 0) CircularProgressIndicator(color = Lime, modifier = Modifier.size(25.dp), strokeWidth = 2.dp)
     }
 }
 
@@ -426,15 +446,15 @@ internal fun ToolIcon(icon: ImageVector, label: String, enabled: Boolean = true,
 
 @Composable
 private fun GlassIcon(icon: ImageVector, label: String, enabled: Boolean, selected: Boolean, onClick: () -> Unit) {
-    IconButton(onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
+    IconButton(onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
         Icon(icon, label, tint = if (!enabled) Muted else if (selected) Lime else Cream, modifier = Modifier.size(20.dp))
     }
 }
 
 @Composable
 private fun GlassText(text: String, label: String, enabled: Boolean, onClick: () -> Unit) {
-    TextButton(onClick, enabled = enabled, modifier = Modifier.height(44.dp).semantics { contentDescription = if (label == text) label else "$label $text" }) {
-        Text(text, color = Cream, fontSize = 12.sp)
+    TextButton(onClick, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = if (label == text) label else "$label $text" }) {
+        Text(text, color = Cream, fontSize = 12.sp, maxLines = 1)
     }
 }
 

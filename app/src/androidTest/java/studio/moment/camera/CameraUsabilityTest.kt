@@ -40,14 +40,53 @@ class CameraUsabilityTest {
             compose.onNodeWithText("온도", useUnmergedTree = true).performClick()
             setSlider(.35f)
             compose.onNodeWithText("완료").performClick()
-            compose.onNodeWithContentDescription("아이폰 XS 스타일, 선택됨").performClick()
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithContentDescription("XS, 선택됨").performClick()
             assertEquals(.42f, prefs.getFloat("intensity", -1f), .001f)
             assertEquals(.35f, prefs.getFloat("warmth", -1f), .001f)
-            compose.onNodeWithContentDescription("아이폰 11 스타일").performClick()
+            compose.onNodeWithContentDescription("11").performClick()
             assertEquals(1f, prefs.getFloat("intensity", -1f), .001f)
-            compose.onNodeWithContentDescription("아이폰 XS 스타일").performClick()
+            compose.onNodeWithContentDescription("XS").performClick()
             assertEquals(.42f, prefs.getFloat("intensity", -1f), .001f)
             assertEquals(.35f, prefs.getFloat("warmth", -1f), .001f)
+        }
+    }
+
+    @Test fun stylesCanBeHiddenWithoutResizingTheCameraOrLosingSelection() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCamera()
+            compose.onNodeWithTag("style-picker").assertDoesNotExist()
+            compose.onNodeWithText("아이폰 XS 스타일").assertDoesNotExist()
+            val frame = compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot
+            val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            assertTrue("The camera should fill the available width", frame.width >= root.width * .94f)
+            assertEquals(.75f, frame.width / frame.height, .01f)
+            compose.onNodeWithTag("shutter").assertIsDisplayed()
+
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithTag("style-picker").assertIsDisplayed()
+            compose.onNodeWithContentDescription("11").performClick()
+            compose.waitUntil { prefs.getString("look", null) == "11" }
+            assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+            compose.onNodeWithContentDescription("스타일 닫기").performClick()
+            compose.onNodeWithTag("style-picker").assertDoesNotExist()
+            assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithContentDescription("11, 선택됨").assertIsDisplayed()
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithTag("style-picker").assertDoesNotExist()
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithTag("style-picker").assertIsDisplayed()
+            compose.waitForIdle()
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            compose.onNodeWithTag("style-picker").assertDoesNotExist()
+            waitForCamera()
+            scenario.recreate()
+            waitForCamera()
+            compose.onNodeWithTag("style-picker").assertDoesNotExist()
+            compose.onNodeWithTag("style-toggle").performClick()
+            compose.onNodeWithContentDescription("11, 선택됨").assertIsDisplayed()
         }
     }
 

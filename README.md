@@ -2,7 +2,7 @@
 
 아이폰 기종에서 영감을 얻은 색감을 골라 사진을 찍고 편집하는 안드로이드 앱입니다. 화면과 안내 문구는 한국어로 제공하며 Android 8.0(API 26) 이상에서 실행할 수 있습니다. Kotlin, Jetpack Compose, CameraX로 만들었습니다.
 
-Play Console에 올릴 [서명된 AAB를 다운로드하세요](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.2/moment-0.2.2-4.aab). 현재 버전은 `0.2.2`, 버전 코드는 `4`입니다. **App Bundle 업로드란에는 이 `.aab` 파일 하나만 선택하세요.** APK는 휴대폰 직접 설치용 파일입니다. 배포 파일과 설명은 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.2)에서 확인할 수 있습니다.
+Play Console에 올릴 [서명된 AAB를 다운로드하세요](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.3/moment-0.2.3-5.aab). 현재 버전은 `0.2.3`, 버전 코드는 `5`입니다. **App Bundle 업로드란에는 이 `.aab` 파일 하나만 선택하세요.** APK는 휴대폰 직접 설치용 파일입니다. 배포 파일과 설명은 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.3)에서 확인할 수 있습니다.
 
 현재 색감은 직접 조정한 프리셋입니다. 실제 아이폰 사진에서 측정한 보정값은 아닙니다. [자료 출처와 한계](docs/COLOR_EVIDENCE.md)에 사양 조사, 촬영 리뷰, 앱에서 정한 수치를 구분해 정리했습니다.
 
@@ -10,13 +10,15 @@ Play Console에 올릴 [서명된 AAB를 다운로드하세요](https://github.c
 
 ## 화면 미리보기
 
-버전 0.2.1을 Android 15 에뮬레이터에서 실행한 화면입니다. 방은 에뮬레이터의 테스트 장면으로, 갤럭시 실기기 촬영 결과는 아닙니다.
+버전 0.2.3을 Android 15 에뮬레이터에서 실행한 화면입니다. 방은 에뮬레이터의 테스트 장면으로, 갤럭시 실기기 촬영 결과는 아닙니다.
 
-| 촬영과 스타일 선택 | 색감 조절 |
+| 기본 촬영 화면 | 스타일 선택 펼침 |
 | --- | --- |
-| <img src="docs/screenshots/camera.png" width="280" alt="모먼트의 한국어 촬영 화면" /> | <img src="docs/screenshots/tune.png" width="280" alt="사진 전체를 보며 강도, 온도, 대비, 노출을 조절하는 화면" /> |
+| <img src="docs/screenshots/camera.png" width="280" alt="모먼트의 한국어 촬영 화면" /> | <img src="docs/screenshots/camera-styles.png" width="280" alt="미리보기 크기를 유지한 채 스타일 목록을 연 화면" /> |
 
-[스타일 설명 화면](docs/screenshots/styles.png), [사진 편집 화면](docs/screenshots/import.png), [앱 정보 화면](docs/screenshots/about.png)도 확인할 수 있습니다.
+[색감 조절 화면](docs/screenshots/tune.png)도 확인할 수 있습니다. [스타일 설명](docs/screenshots/styles.png), [사진 편집](docs/screenshots/import.png), [앱 정보](docs/screenshots/about.png)는 버전 0.2.1의 기록입니다.
+
+기본 촬영 화면은 사진 비율을 유지하며 가능한 너비를 모두 사용합니다. 스타일 목록은 처음에는 접혀 있고, 하단의 **스타일** 버튼으로 열거나 닫습니다. **닫기** 버튼과 뒤로 가기도 사용할 수 있으며, 목록을 열어도 미리보기의 크기와 구도는 바뀌지 않습니다.
 
 ## 실행
 
@@ -68,12 +70,12 @@ GitHub에 첨부된 AAB를 받아 Console에서 직접 내부 테스트로 등�
 
 ## 검증
 
-2026-10-27 기준, 버전 0.2.1에서 아래 항목을 통과했습니다.
+2026-10-27 기준, 버전 0.2.3에서 아래 항목을 통과했습니다.
 
 - 디버그 APK, 최적화된 릴리스 APK와 AAB 빌드
 - 단위 테스트 10개: 색상 변환, 경계값, 촬영 방향, 투명 픽셀 처리
-- Android 통합 테스트 13개: 기존 촬영 및 저장 검증에 스타일별 조정값 보존과 이전 설정 이전, 원본 비교 상태, 항목별 초기화, 조절 화면 배치, 가져온 사진의 저장 흐름 검증을 추가했습니다.
-- 360×720dp 화면과 글자 크기 130%에서 사진 전체, 원본 비교 버튼, 조절창이 겹치거나 화면 밖으로 나가지 않는지 추가 검증
+- Android 통합 테스트 14개: 촬영과 비율 변경, 전후면 전환, 스타일별 조절값 보존, 원본 비교, 사진 저장과 편집, 스타일 목록을 접어도 촬영 구도와 선택이 유지되는지 검증했습니다.
+- 360×720dp 화면과 글자 크기 130%에서 사용성 테스트 5개 추가 통과. 촬영 화면의 크기, 스타일 목록 접기, 사진과 조절창의 배치 검증
 - `lintDebug` 오류 0개. 업데이트 권장과 세로 화면 고정 등을 포함한 경고는 남아 있습니다.
 - 릴리스 APK에 네트워크 권한이 없는 것 확인
 

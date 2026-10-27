@@ -35,7 +35,8 @@ class CameraFlowTest {
             compose.waitUntil(30_000) {
                 compose.onAllNodes(hasContentDescription("사진 촬영") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithContentDescription("아이폰 XS 스타일, 선택됨").assertIsDisplayed()
+            compose.onNodeWithContentDescription("스타일 선택").performClick()
+            compose.onNodeWithContentDescription("XS, 선택됨").assertIsDisplayed()
             compose.onNodeWithContentDescription("사진 촬영").performClick()
             val prefs = context.getSharedPreferences("moment", Context.MODE_PRIVATE)
             compose.waitUntil(30_000) { prefs.getString("latest", null) != null }
@@ -46,7 +47,7 @@ class CameraFlowTest {
             assertEquals(.75f, bounds.outWidth.toFloat() / bounds.outHeight, .02f)
             val exif = context.contentResolver.openInputStream(uri).use { ExifInterface(it!!) }
             assertTrue(exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION)!!.contains("xs inspired"))
-            compose.onNodeWithContentDescription("아이폰 11 스타일").performClick()
+            compose.onNodeWithContentDescription("11").performClick()
             compose.waitUntil(5_000) { prefs.getString("look", null) == "11" }
             compose.onNodeWithContentDescription("설정").performClick()
             compose.onNodeWithText("원본도 저장").assertIsDisplayed()
@@ -56,7 +57,7 @@ class CameraFlowTest {
             compose.waitUntil(30_000) {
                 compose.onAllNodes(hasContentDescription("사진 촬영") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithContentDescription("아이폰 11 스타일, 선택됨").assertIsDisplayed()
+            compose.onNodeWithContentDescription("11, 선택됨").assertIsDisplayed()
             assertFalse(prefs.getBoolean("grid", true))
             compose.onNodeWithContentDescription("카메라 전환").performClick()
             waitForCamera()
@@ -65,6 +66,8 @@ class CameraFlowTest {
             compose.onNodeWithContentDescription("사진 비율 9:16").performClick()
             waitForCamera()
             compose.onNodeWithContentDescription("사진 비율 1:1").assertIsDisplayed()
+            // The toolbar stays visible while the camera binds the new crop.
+            waitForCamera()
             compose.onNodeWithContentDescription("사진 촬영").performClick()
             compose.waitUntil(30_000) { prefs.getString("latest", null) != uri.toString() }
             val square = Uri.parse(prefs.getString("latest", null))
