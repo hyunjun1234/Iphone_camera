@@ -44,6 +44,18 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
 초점과 노출, 줌, 플래시의 사용 범위는 카메라 하드웨어에 따라 다릅니다. 초점 고정은 자동 노출 고정을 뜻하지 않습니다. [기능별 지원 범위와 검토 결과](docs/RELEASE_REVIEW.md)를 확인하세요.
 
+## Google Play 내부 테스트 준비
+
+업로드용 키로 서명한 AAB와 설치용 APK를 만드는 명령을 추가했습니다.
+
+```sh
+python3 scripts/prepare_play_release.py
+```
+
+서명 설정이 없으면 중단하며, 결과는 `app/build/outputs/play/`에 저장합니다. 새 앱의 키 생성, 기존 키 사용법, Console 등록 순서는 [내부 테스트 배포 안내](docs/PLAY_INTERNAL_TESTING.md)에 정리했습니다. 키와 비밀번호는 Git 저장소 밖에 보관합니다.
+
+현재는 서명 파일 준비와 로컬 검증까지 완료했으며, Play Console 업로드와 테스트 설치 링크 발급은 계정 접근 연결이 필요합니다.
+
 ## 저장 방식과 제한
 
 미리보기와 저장에는 같은 33×33×33 색상 변환표를 사용합니다. 카메라의 미리보기 처리와 정지 사진 처리, JPG 압축 과정 때문에 두 결과의 모든 픽셀이 같지는 않습니다.
@@ -70,4 +82,4 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew bundleRelease
 ```
 
-갤럭시 실기기의 확장 촬영 기능, 장시간 발열과 메모리 사용, 실제 아이폰과의 색상 비교는 아직 검증하지 않았습니다. 배포용 서명과 운영자 정보, 개인정보처리방침도 출시 전에 준비해야 합니다. 기술 구조와 실측 계획은 [조사 문서](docs/RESEARCH.md)에 정리했습니다.
+갤럭시 실기기의 확장 촬영 기능, 장시간 발열과 메모리 사용, 실제 아이폰과의 색상 비교는 아직 검증하지 않았습니다. 업로드용 서명은 준비했으며, 정식 출시에는 Console의 앱 서명 설정과 운영자 정보, 개인정보처리방침 등 추가 준비가 필요합니다. 기술 구조와 실측 계획은 [조사 문서](docs/RESEARCH.md)에 정리했습니다.

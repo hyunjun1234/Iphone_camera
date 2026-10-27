@@ -1,7 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val signingPropertiesFile = providers.environmentVariable("MOMENT_SIGNING_PROPERTIES")
+    .map { file(it) }
+    .getOrElse(File(System.getProperty("user.home"), ".config/moment-camera/release.properties"))
+val uploadSigning = Properties().apply {
+    if (signingPropertiesFile.isFile) signingPropertiesFile.reader(Charsets.UTF_8).use { load(it) }
+}
+val signingFields = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val hasUploadSigning = signingFields.all { !uploadSigning.getProperty(it).isNullOrBlank() }
+require(!signingPropertiesFile.exists() || hasUploadSigning) {
+    "Upload signing configuration is incomplete. Required fields: ${signingFields.joinToString()}."
+}
+require(providers.environmentVariable("MOMENT_REQUIRE_SIGNING").orNull != "true" || hasUploadSigning) {
+    "Upload signing is required. Run python3 scripts/prepare_play_release.py --create-upload-key for a new app, or set MOMENT_SIGNING_PROPERTIES to an existing upload key configuration."
 }
 
 android {
@@ -16,8 +33,18 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    signingConfigs {
+        if (hasUploadSigning) create("upload") {
+            storeFile = signingPropertiesFile.parentFile.resolve(uploadSigning.getProperty("storeFile"))
+            require(storeFile!!.isFile) { "Upload keystore does not exist. Check storeFile in the signing configuration." }
+            storePassword = uploadSigning.getProperty("storePassword")
+            keyAlias = uploadSigning.getProperty("keyAlias")
+            keyPassword = uploadSigning.getProperty("keyPassword")
+        }
+    }
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("upload")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
