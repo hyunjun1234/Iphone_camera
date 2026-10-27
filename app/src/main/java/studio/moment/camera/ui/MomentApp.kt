@@ -20,7 +20,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -89,7 +88,6 @@ import studio.moment.camera.camera.CaptureMode
 import studio.moment.camera.camera.FrameRatio
 import studio.moment.camera.camera.FocusState
 import studio.moment.camera.color.Looks
-import java.util.Locale
 import kotlin.math.abs
 
 internal enum class Sheet { LOOKS, SETTINGS, MODES, ABOUT }
@@ -121,6 +119,8 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var tuning by rememberSaveable { mutableStateOf(false) }
     var stylesExpanded by rememberSaveable { mutableStateOf(false) }
+    var zoomExpanded by remember { mutableStateOf(false) }
+    var zoomInteraction by remember { mutableIntStateOf(0) }
     var front by rememberSaveable { mutableStateOf(false) }
     var mode by rememberSaveable { mutableStateOf(CaptureMode.AUTO) }
     var flash by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
@@ -137,6 +137,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     val comparing = compareLocked || comparePressed
     fun endComparison() { compareLocked = false; comparePressed = false }
     fun selectLook(id: String) { endComparison(); model.selectLook(id) }
+    fun showZoom() { endComparison(); stylesExpanded = false; zoomExpanded = true; zoomInteraction++ }
     var focus by remember { mutableStateOf<Offset?>(null) }
     var latestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var latestRefresh by remember { mutableIntStateOf(0) }
@@ -168,6 +169,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     fun triggerShutter() {
         if (busy || !gradeReady || (imported == null && !status.ready)) return
         endComparison()
+        zoomExpanded = false
         engine.setGrade(lut, false)
         if (prefs.haptics) hostView.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
         save { if (imported != null) model.saveImport() else model.capture(engine) }
@@ -194,6 +196,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
         } else engine.stop()
     }
     LaunchedEffect(flash, status.ready, status.hasFlash) { engine.setFlash(flash) }
+    LaunchedEffect(tuning, front, mode, imported, status.ready) { zoomExpanded = false }
     LaunchedEffect(focus) { if (focus != null) { delay(1300); focus = null } }
     LaunchedEffect(latest, latestRefresh) {
         val uri = latest
@@ -206,15 +209,16 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                 permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                 latestRefresh++
             }
-            if (event == Lifecycle.Event.ON_STOP) { model.cancelTimer(); endComparison() }
+            if (event == Lifecycle.Event.ON_STOP) { model.cancelTimer(); endComparison(); zoomExpanded = false }
         }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer); engine.close() }
     }
-    BackHandler(tuning || stylesExpanded || countdown > 0 || imported != null) {
+    BackHandler(tuning || zoomExpanded || stylesExpanded || countdown > 0 || imported != null) {
         when {
             tuning -> { tuning = false; endComparison() }
             countdown > 0 -> model.cancelTimer()
+            zoomExpanded -> zoomExpanded = false
             stylesExpanded -> stylesExpanded = false
             else -> { endComparison(); model.closeImport() }
         }
@@ -239,7 +243,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp * textScale else 480.dp))
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState(), enabled = maxHeight < contentHeight).height(contentHeight)) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp).testTag("camera-toolbar"),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     if (tuning) {
                         Text("색감 조절", fontSize = 20.sp, color = Cream, modifier = Modifier.weight(1f).padding(start = 12.dp))
@@ -298,8 +302,13 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                             onLongPress = { point -> focusAt(point, lock = true) },
                                         )
                                     }
-                                    .pointerInput(status.ready, busy) {
-                                        detectTransformGestures { _, _, zoom, _ -> if (status.ready && !busy) engine.zoom(engine.status.value.zoom * zoom) }
+                                    .pointerInput(status.ready, busy, tuning) {
+                                        detectTransformGestures { _, _, zoom, _ ->
+                                            if (status.ready && !busy && abs(zoom - 1f) > .001f) {
+                                                engine.zoom(engine.status.value.zoom * zoom)
+                                                if (!tuning && engine.status.value.maxZoom > engine.status.value.minZoom) showZoom()
+                                            }
+                                        }
                                     })
                                 if (prefs.grid && status.ready && !tuning) GridOverlay()
                                 focus?.let { point -> Canvas(Modifier.fillMaxSize()) {
@@ -325,26 +334,6 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         }
                         if (!tuning && imported != null) IconButton(onClick = { endComparison(); model.closeImport() }, enabled = !busy, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color.Black.copy(alpha = .4f), CircleShape)) {
                             Icon(Icons.Outlined.Close, "가져온 사진 닫기", tint = Cream)
-                        }
-                        if (!tuning && (status.ready || imported != null)) {
-                            Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .55f)))).padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                                Row(Modifier.weight(1f).padding(end = 8.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                                    if (imported == null) {
-                                        val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
-                                        zooms.take(5).forEach { zoom ->
-                                            val selected = abs(status.zoom - zoom) < .08f
-                                            TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
-                                                modifier = Modifier.height(48.dp).widthIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 8.dp),
-                                                colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Cream)) {
-                                                Text("${formatZoom(zoom)}배", fontSize = 12.sp, maxLines = 1, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                                            }
-                                        }
-                                    }
-                                }
-                                CompareButton(comparing, !busy, onToggle = { compareLocked = !compareLocked }, onPress = { comparePressed = it })
-                            }
                         }
                         if (busy && countdown == 0) Text(stage.label, color = Cream, fontSize = 12.sp,
                             modifier = Modifier.align(Alignment.TopCenter).padding(12.dp)
@@ -385,6 +374,15 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         onUpdate = { change -> endComparison(); model.update(change) },
                         onExposure = { value -> endComparison(); engine.exposure(value) })
                 } else {
+                    CameraTools(
+                        zoom = status.zoom, minZoom = status.minZoom, maxZoom = status.maxZoom,
+                        camera = imported == null, enabled = !busy && (status.ready || imported != null),
+                        expanded = zoomExpanded, interaction = zoomInteraction,
+                        onExpand = ::showZoom, onCollapse = { zoomExpanded = false },
+                        onZoom = { engine.zoom(it); zoomInteraction++ },
+                        comparing = comparing, onCompare = { compareLocked = !compareLocked },
+                        onComparePress = { comparePressed = it },
+                    )
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         if (imported == null) {
@@ -535,7 +533,7 @@ private fun GlassText(text: String, label: String, enabled: Boolean, onClick: ()
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CompareButton(comparing: Boolean, enabled: Boolean, onToggle: () -> Unit, onPress: (Boolean) -> Unit) {
+internal fun CompareButton(comparing: Boolean, enabled: Boolean, onToggle: () -> Unit, onPress: (Boolean) -> Unit) {
     val interactions = remember { MutableInteractionSource() }
     val pressed by interactions.collectIsPressedAsState()
     LaunchedEffect(pressed) { onPress(pressed) }
@@ -591,5 +589,3 @@ private fun CameraMessage(title: String, body: String, action: String, onClick: 
         TextButton(onClick) { Text(action) }
     }
 }
-
-private fun formatZoom(zoom: Float): String = if (zoom % 1f == 0f) zoom.toInt().toString() else String.format(Locale.US, "%.1f", zoom)

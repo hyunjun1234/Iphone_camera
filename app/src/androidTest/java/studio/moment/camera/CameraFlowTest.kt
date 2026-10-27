@@ -103,6 +103,11 @@ class CameraFlowTest {
                 assertTrue(frame.top > scene.top && frame.bottom < scene.bottom)
                 assertEquals(ratio, frame.width / frame.height, .005f)
                 assertEquals(scene, compose.onNodeWithTag("camera-scene").fetchSemanticsNode().boundsInRoot)
+                for (tag in listOf("camera-tools", "zoom-toggle", "original-compare")) {
+                    val control = compose.onNodeWithTag(tag).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+                    assertTrue("$tag must stay below the $label photo", control.top >= frame.bottom)
+                    assertTrue("$tag must stay above the shutter", control.bottom <= shutter.top)
+                }
                 val previous = prefs.getString("latest", null)
                 compose.onNodeWithContentDescription("사진 촬영").assertIsEnabled().performClick()
                 try {

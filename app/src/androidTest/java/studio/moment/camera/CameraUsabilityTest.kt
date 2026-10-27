@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -59,7 +60,10 @@ class CameraUsabilityTest {
             compose.onNodeWithText("아이폰 XS 스타일").assertDoesNotExist()
             val frame = compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot
             val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
-            assertTrue("The camera should fill the available width", frame.width >= root.width * .94f)
+            val toolbar = compose.onNodeWithTag("camera-toolbar").fetchSemanticsNode().boundsInRoot
+            val tools = compose.onNodeWithTag("camera-tools").fetchSemanticsNode().boundsInRoot
+            assertTrue("The camera should fill the available width or height",
+                frame.width >= root.width * .94f || frame.height >= (tools.top - toolbar.bottom) * .99f)
             assertEquals(.75f, frame.width / frame.height, .01f)
             compose.onNodeWithTag("shutter").assertIsDisplayed()
 
@@ -109,6 +113,48 @@ class CameraUsabilityTest {
             compose.onNodeWithText("원본 비교", substring = true).assertIsDisplayed()
             compose.onNodeWithTag("original-compare").performTouchInput { longClick() }
             compose.onNodeWithText("원본 비교", substring = true).assertIsDisplayed()
+        }
+    }
+
+    @Test fun zoomControlsStayOutsidePhotoAndCollapseOnlyAfterInteractionEnds() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCamera()
+            // The emulator's virtual-scene rear camera has a fixed 1x lens; its front camera supports zoom.
+            if (compose.onAllNodes(hasTestTag("zoom-toggle") and isEnabled()).fetchSemanticsNodes().isEmpty()) {
+                compose.onNodeWithContentDescription("카메라 전환").performClick()
+                waitForCamera()
+            }
+            compose.onNodeWithTag("zoom-toggle").assertIsEnabled()
+            val frame = compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot
+            compose.onNodeWithTag("zoom-toggle").performClick()
+            val slider = compose.onNodeWithTag("zoom-slider").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(slider.top >= frame.bottom)
+            assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+            compose.onNodeWithTag("zoom-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("2배").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("zoom-reset").performClick()
+            compose.waitUntil(5_000) { compose.onAllNodesWithText("1배").fetchSemanticsNodes().isNotEmpty() }
+            sendCameraKey(compose, scenario, android.view.KeyEvent.KEYCODE_BACK)
+            compose.onNodeWithTag("zoom-slider").assertDoesNotExist()
+            compose.onNodeWithTag("photo-preview").performTouchInput {
+                pinch(center - Offset(40f, 0f), center + Offset(40f, 0f),
+                    center - Offset(140f, 0f), center + Offset(140f, 0f), 350)
+            }
+            compose.onNodeWithTag("zoom-slider").assertIsDisplayed()
+            compose.onNodeWithText("이 카메라에서는 요청한 배율을 사용할 수 없어요.").assertDoesNotExist()
+            assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+            compose.onNodeWithTag("zoom-slider").performTouchInput {
+                down(centerLeft + Offset(width * .15f, 0f))
+                moveTo(center, 200)
+            }
+            // Holding the slider must not dismiss it, even past the idle timeout.
+            android.os.SystemClock.sleep(4_000)
+            compose.onNodeWithTag("zoom-slider").assertIsDisplayed().performTouchInput { up() }
+            compose.onNodeWithText("이 카메라에서는 요청한 배율을 사용할 수 없어요.").assertDoesNotExist()
+            compose.waitUntil(6_000) { compose.onAllNodesWithTag("zoom-slider").fetchSemanticsNodes().isEmpty() }
+            compose.onNodeWithTag("zoom-toggle").assertIsDisplayed()
+            compose.onNodeWithTag("original-compare").assertIsDisplayed()
+            assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
         }
     }
 

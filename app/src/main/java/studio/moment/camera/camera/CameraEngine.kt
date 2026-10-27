@@ -80,6 +80,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
     private var lastView: PreviewView? = null
     private var generation = 0
     private var focusGeneration = 0
+    private var zoomRequest = 0
     private var closed = false
     private var captureInFlight = false
     private var captureRotation = Surface.ROTATION_0
@@ -218,9 +219,11 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
         val c = camera ?: return
         val requested = ratio.coerceIn(mutableStatus.value.minZoom, mutableStatus.value.maxZoom)
         resumeZoom = requested
+        val request = ++zoomRequest
         val future = c.cameraControl.setZoomRatio(requested)
         future.addListener({ runCatching { future.get() }.onFailure {
-            if (camera === c && mutableStatus.value.ready) onNotice("이 카메라에서는 요청한 배율을 사용할 수 없어요.")
+            // CameraX cancels older zoom requests during a pinch or slider drag.
+            if (camera === c && request == zoomRequest && mutableStatus.value.ready) onNotice("이 카메라에서는 요청한 배율을 사용할 수 없어요.")
         } }, main)
     }
 
