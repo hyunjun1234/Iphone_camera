@@ -10,6 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import studio.moment.camera.color.ColorLut
+import studio.moment.camera.camera.CaptureFrame
 import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.data.PhotoStore
 import studio.moment.camera.data.UserMessageException
@@ -19,6 +20,54 @@ import kotlin.math.abs
 @RunWith(AndroidJUnit4::class)
 class PhotoExportTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test fun cameraFrameExcludesSurroundAndKeepsTheSameOriginalCropAfterExifRotation() = runBlocking {
+        val source = File.createTempFile("frame-test", ".jpg", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(300, 200, Bitmap.Config.ARGB_8888)
+        // Red surroundings and an asymmetric two-colour subject in the selected rectangle.
+        for (y in 0 until 200) for (x in 0 until 300) bitmap.setPixel(x, y,
+            if (x in 30 until 150 && y in 40 until 160) {
+                if (x < 90) 0xFF00FF00.toInt() else 0xFF0000FF.toInt()
+            } else 0xFFFF0000.toInt())
+        val store = PhotoStore(context)
+        try {
+            for (orientation in listOf(1, 2, 3, 6, 8)) {
+                source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it) }
+                ExifInterface(source).apply {
+                    setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString()); saveAttributes()
+                }
+                val sourceBytes = source.readBytes()
+                val frame = when (orientation) {
+                    2 -> CaptureFrame(.5f, .2f, .9f, .8f)
+                    3 -> CaptureFrame(.5f, .2f, .9f, .8f)
+                    6 -> CaptureFrame(.2f, .1f, .8f, .5f)
+                    8 -> CaptureFrame(.2f, .5f, .8f, .9f)
+                    else -> CaptureFrame(.1f, .2f, .5f, .8f)
+                }
+                val settings = GradeSettings("6s")
+                val lut = ColorLut.create(settings)
+                val result = store.export(source, lut, settings, true, frame)
+                try {
+                    for ((uri, graded) in listOf(result.uri to true, result.original!! to false)) {
+                        val saved = context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it) }!!
+                        try {
+                            assertEquals(120, saved.width); assertEquals(120, saved.height)
+                            val first = if (orientation in listOf(2, 3, 8)) 0xFF0000FF.toInt() else 0xFF00FF00.toInt()
+                            val last = if (orientation in listOf(2, 3, 8)) 0xFF00FF00.toInt() else 0xFF0000FF.toInt()
+                            assertColorClose(if (graded) lut.sample(first) else first, saved.getPixel(20, 20))
+                            assertColorClose(if (graded) lut.sample(last) else last, saved.getPixel(100, 100))
+                        } finally { saved.recycle() }
+                        val exif = context.contentResolver.openInputStream(uri).use { ExifInterface(it!!) }
+                        assertEquals(1, exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0))
+                    }
+                    assertArrayEquals(sourceBytes, source.readBytes())
+                } finally {
+                    context.contentResolver.delete(result.uri, null, null)
+                    context.contentResolver.delete(result.original!!, null, null)
+                }
+            }
+        } finally { bitmap.recycle(); source.delete() }
+    }
 
     @Test fun exportNormalizesExifRotationPreservesOriginalAndPublishesBothFiles() = runBlocking {
         val source = File.createTempFile("orientation-test", ".jpg", context.cacheDir)

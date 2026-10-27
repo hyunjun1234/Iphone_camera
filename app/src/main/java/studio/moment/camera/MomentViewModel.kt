@@ -128,9 +128,10 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
                 for (second in settings.timer downTo 1) { mutableCountdown.value = second; delay(1000) }
                 mutableCountdown.value = 0
                 setStage(WorkStage.CAPTURING)
-                source = engine.takePicture(engine.status.value.frontFacing && settings.mirrorSelfie)
+                val captured = engine.takePicture(engine.status.value.frontFacing && settings.mirrorSelfie)
+                source = captured.file
                 setStage(WorkStage.SAVING)
-                val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal)
+                val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal, captured.frame)
                 mutableLatest.value = result.uri; storage.latestUri = result.uri.toString()
                 notice(if (result.original != null) "원본과 보정한 사진을 갤러리에 저장했어요." else "보정한 사진을 갤러리에 저장했어요.")
             } catch (cancel: CancellationException) { throw cancel }

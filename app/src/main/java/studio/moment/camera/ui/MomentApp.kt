@@ -44,14 +44,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -64,6 +70,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -77,6 +84,7 @@ import kotlinx.coroutines.delay
 import studio.moment.camera.MomentViewModel
 import studio.moment.camera.MainActivity
 import studio.moment.camera.camera.CameraEngine
+import studio.moment.camera.camera.CaptureFrame
 import studio.moment.camera.camera.CaptureMode
 import studio.moment.camera.camera.FrameRatio
 import studio.moment.camera.camera.FocusState
@@ -117,6 +125,13 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     var mode by rememberSaveable { mutableStateOf(CaptureMode.AUTO) }
     var flash by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var retry by remember { mutableIntStateOf(0) }
+    var sceneSize by remember { mutableStateOf(IntSize.Zero) }
+    var sceneOrigin by remember { mutableStateOf(Offset.Zero) }
+    var displayedFrame by remember { mutableStateOf(Rect.Zero) }
+    // Keep the normal composition when the adjustment panel temporarily shrinks its preview.
+    var frameEdges by rememberSaveable { mutableStateOf(listOf(0f, 0f, 1f, 1f)) }
+    val captureFrame = CaptureFrame(frameEdges[0], frameEdges[1], frameEdges[2], frameEdges[3], prefs.ratio.value)
+    SideEffect { engine.setCaptureFrame(captureFrame) }
     var compareLocked by remember { mutableStateOf(false) }
     var comparePressed by remember { mutableStateOf(false) }
     val comparing = compareLocked || comparePressed
@@ -174,8 +189,10 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 
     LaunchedEffect(Unit) { model.messages.collect { snack.showSnackbar(it) } }
     LaunchedEffect(lut, comparing) { engine.setGrade(lut, comparing) }
-    LaunchedEffect(permission, front, mode, prefs.ratio, imported, retry) {
-        if (permission && imported == null) engine.bind(owner, preview, front, mode, prefs.ratio) else engine.stop()
+    LaunchedEffect(permission, front, mode, sceneSize, imported, retry) {
+        if (permission && imported == null && sceneSize.width > 0 && sceneSize.height > 0) {
+            engine.bind(owner, preview, front, mode, android.util.Rational(sceneSize.width, sceneSize.height))
+        } else engine.stop()
     }
     LaunchedEffect(flash, status.ready, status.hasFlash) { engine.setFlash(flash) }
     LaunchedEffect(focus) { if (focus != null) { delay(1300); focus = null } }
@@ -205,6 +222,21 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     }
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().onSizeChanged { sceneSize = it }
+            .onGloballyPositioned { sceneOrigin = it.boundsInRoot().topLeft }) {
+            if (permission && imported == null) {
+                val normal = Rect(captureFrame.left * sceneSize.width, captureFrame.top * sceneSize.height,
+                    captureFrame.right * sceneSize.width, captureFrame.bottom * sceneSize.height)
+                val scale = if (tuning && normal.width > 0 && displayedFrame.width > 0) displayedFrame.width / normal.width else 1f
+                AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize().testTag("camera-scene")
+                    .graphicsLayer {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = scale; scaleY = scale
+                        translationX = if (tuning) displayedFrame.left - normal.left * scale else 0f
+                        translationY = if (tuning) displayedFrame.top - normal.top * scale else 0f
+                    })
+                CameraSurround(displayedFrame, if (tuning) 1f else .10f)
+            }
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp * textScale else 480.dp))
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState(), enabled = maxHeight < contentHeight).height(contentHeight)) {
@@ -237,19 +269,34 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     val frameRatio = importedOriginal?.takeIf { imported != null }?.let { it.width.toFloat() / it.height } ?: prefs.ratio.value
                     val frameWidth = minOf(maxWidth, maxHeight * frameRatio)
-                    Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview").clip(RoundedCornerShape(0.dp)).background(Panel)) {
+                    Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview")
+                        .onGloballyPositioned { coordinates ->
+                            val bounds = coordinates.boundsInRoot().translate(-sceneOrigin)
+                            displayedFrame = bounds
+                            if (!tuning && imported == null && sceneSize.width > 0 && sceneSize.height > 0 && bounds.width > 0 && bounds.height > 0) {
+                                frameEdges = listOf(bounds.left / sceneSize.width, bounds.top / sceneSize.height,
+                                    bounds.right / sceneSize.width, bounds.bottom / sceneSize.height).map { it.coerceIn(0f, 1f) }
+                            }
+                        }.clip(RoundedCornerShape(0.dp))
+                        .background(if (permission && imported == null) Color.Transparent else Panel)) {
                         when {
                             imported != null -> {
                                 val bitmap = if (comparing) importedOriginal else importedPreview ?: importedOriginal
                                 bitmap?.let { Image(it.asImageBitmap(), "가져온 사진 미리보기", Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
                             }
                             permission -> {
-                                AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize())
                                 Box(Modifier.fillMaxSize()
-                                    .pointerInput(status.ready, busy) {
+                                    .pointerInput(status.ready, busy, captureFrame, sceneSize) {
+                                        fun focusAt(point: Offset, lock: Boolean = false) {
+                                            if (!status.ready || busy) return
+                                            val x = (captureFrame.left + point.x / size.width * (captureFrame.right - captureFrame.left)) * sceneSize.width
+                                            val y = (captureFrame.top + point.y / size.height * (captureFrame.bottom - captureFrame.top)) * sceneSize.height
+                                            engine.focus(preview, x, y, lock)
+                                            focus = point
+                                        }
                                         detectTapGestures(
-                                            onTap = { point -> if (status.ready && !busy) { engine.focus(preview, point.x, point.y); focus = point } },
-                                            onLongPress = { point -> if (status.ready && !busy) { engine.focus(preview, point.x, point.y, lock = true); focus = point } },
+                                            onTap = { point -> focusAt(point) },
+                                            onLongPress = { point -> focusAt(point, lock = true) },
                                         )
                                     }
                                     .pointerInput(status.ready, busy) {
@@ -384,6 +431,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
             }
             SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(12.dp))
         }
+        }
         sheet?.let { selected ->
             MomentSheet(selected, prefs, status, onDismiss = { sheet = null }, onUpdate = model::update,
                 onLook = ::selectLook, onMode = { mode = it; sheet = null },
@@ -392,6 +440,25 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
         if (photoOpen && latest != null) PhotoDialog(latest!!, latestBitmap, { photoOpen = false }) { intent ->
             runCatching { context.startActivity(intent) }.onFailure { model.notice("사진을 열지 못했어요. 갤러리에서 사진이 삭제되지 않았는지 확인해 주세요.") }
         }
+    }
+}
+
+/** One camera surface continues under the controls; only the selected frame is saved. */
+@Composable
+private fun CameraSurround(frame: Rect, opacity: Float) {
+    Canvas(Modifier.fillMaxSize()) {
+        val shade = Color.Black.copy(alpha = opacity)
+        if (frame.isEmpty) { drawRect(shade); return@Canvas }
+        val left = frame.left.coerceIn(0f, size.width)
+        val top = frame.top.coerceIn(0f, size.height)
+        val right = frame.right.coerceIn(left, size.width)
+        val bottom = frame.bottom.coerceIn(top, size.height)
+        drawRect(shade, Offset.Zero, Size(size.width, top))
+        drawRect(shade, Offset(0f, bottom), Size(size.width, size.height - bottom))
+        drawRect(shade, Offset(0f, top), Size(left, bottom - top))
+        drawRect(shade, Offset(right, top), Size(size.width - right, bottom - top))
+        if (opacity < 1f) drawRect(Color.White.copy(alpha = .25f), Offset(left, top),
+            Size(right - left, bottom - top), style = Stroke(1.dp.toPx()))
     }
 }
 

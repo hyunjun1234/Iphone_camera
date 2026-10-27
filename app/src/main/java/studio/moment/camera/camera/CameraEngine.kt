@@ -83,6 +83,8 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
     private var closed = false
     private var captureInFlight = false
     private var captureRotation = Surface.ROTATION_0
+    private var previewRotation = Surface.ROTATION_0
+    private var captureFrame: CaptureFrame? = null
     private var resumeZoom = 1f
     private var resumeEv = 0f
     private val orientation = object : OrientationEventListener(context) {
@@ -115,7 +117,9 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
         if (!captureInFlight) capture?.targetRotation = rotation
     }
 
-    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode, ratio: FrameRatio) {
+    fun setCaptureFrame(frame: CaptureFrame) { captureFrame = frame }
+
+    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode, viewportRatio: android.util.Rational) {
         val previous = mutableStatus.value
         val version = ++generation
         // Immediately prevent capture on a stale session while initialization is suspended.
@@ -136,7 +140,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
             val available = CaptureMode.entries.filter { it == CaptureMode.STANDARD ||
                 runCatching { extensions?.isExtensionAvailable(base, it.extension) == true }.getOrDefault(false) }.toMutableSet()
             var active = mode.takeIf { it in available } ?: CaptureMode.STANDARD
-            val previewRotation = view.display?.rotation ?: Surface.ROTATION_0
+            previewRotation = view.display?.rotation ?: Surface.ROTATION_0
             val preview = Preview.Builder().setTargetRotation(previewRotation)
                 .setResolutionSelector(ResolutionSelector.Builder().build()).build().apply { surfaceProvider = view.surfaceProvider }
             val still = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
@@ -149,7 +153,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
                     error = userMessage(error, "미리보기를 표시하지 못했어요. 다시 시도해 주세요."))
             } }.also { it.lut = currentLut; it.compareOriginal = comparing; processor = it }
             val group = UseCaseGroup.Builder().addUseCase(preview).addUseCase(still)
-                .setViewPort(ViewPort.Builder(android.util.Rational(ratio.width, ratio.height), previewRotation)
+                .setViewPort(ViewPort.Builder(viewportRatio, previewRotation)
                     .setScaleType(ViewPort.FILL_CENTER).build()).addEffect(nextProcessor.effect).build()
             val selector = if (active == CaptureMode.STANDARD) base else extensions!!.getExtensionEnabledCameraSelector(base, active.extension)
             val bound = try { p.bindToLifecycle(owner, selector, group) }
@@ -268,9 +272,11 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
         }.onFailure { if (camera === c && mutableStatus.value.ready) onNotice("노출을 변경하지 못했어요. 다시 시도해 주세요.") } }, main)
     }
 
-    suspend fun takePicture(mirror: Boolean): File = suspendCancellableCoroutine { continuation ->
+    suspend fun takePicture(mirror: Boolean): CapturedPhoto = suspendCancellableCoroutine { continuation ->
         val still = capture
-        if (still == null || !mutableStatus.value.ready || captureInFlight) {
+        val bound = camera
+        val frame = captureFrame
+        if (still == null || bound == null || frame == null || !mutableStatus.value.ready || captureInFlight) {
             continuation.resumeWithException(UserMessageException("카메라가 준비된 뒤 다시 촬영해 주세요."))
             return@suspendCancellableCoroutine
         }
@@ -278,6 +284,11 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
         val file = File.createTempFile("capture-", ".jpg", folder)
         captureInFlight = true
         still.targetRotation = captureRotation
+        val rotationDelta = bound.cameraInfo.getSensorRotationDegrees(captureRotation) - bound.cameraInfo.getSensorRotationDegrees(previewRotation)
+        // PreviewView mirrors the front camera; JPEG mirroring is a separate user setting.
+        val unmirroredFrame = if (mutableStatus.value.frontFacing) frame.mirrorHorizontally() else frame
+        val rotatedFrame = unmirroredFrame.rotateClockwise(rotationDelta / 90)
+        val savedFrame = if (mirror) rotatedFrame.mirrorHorizontally() else rotatedFrame
         val metadata = ImageCapture.Metadata().apply { isReversedHorizontal = mirror }
         val options = ImageCapture.OutputFileOptions.Builder(file).setMetadata(metadata).build()
         fun finished() { captureInFlight = false; capture?.targetRotation = captureRotation }
@@ -286,7 +297,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     finished()
                     // Delete the file if cancellation wins the dispatcher hand-off race.
-                    if (continuation.isActive) continuation.resume(file) { _, value, _ -> value.delete() } else file.delete()
+                    if (continuation.isActive) continuation.resume(CapturedPhoto(file, savedFrame)) { _, value, _ -> value.file.delete() } else file.delete()
                 }
                 override fun onError(exception: ImageCaptureException) {
                     finished(); file.delete()

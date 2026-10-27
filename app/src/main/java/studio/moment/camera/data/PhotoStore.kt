@@ -19,6 +19,7 @@ import studio.moment.camera.color.ColorLut
 import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.color.Looks
 import studio.moment.camera.color.compositeOnWhite
+import studio.moment.camera.camera.CaptureFrame
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -54,13 +55,19 @@ class PhotoStore(private val context: Context) {
         } catch (e: Exception) { file.delete(); throw e }
     }
 
-    suspend fun export(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean): SavedPhoto = withContext(Dispatchers.IO) {
+    suspend fun export(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean, frame: CaptureFrame? = null): SavedPhoto = withContext(Dispatchers.IO) {
         // Leave room for rotation, a mutable copy, the UI and camera buffers on small heaps.
         val maxPixels = minOf(16_000_000L, Runtime.getRuntime().maxMemory() / 16).toInt().coerceAtLeast(1_000_000)
-        val bitmap = decode(source, maxPixels, mutable = true)
+        val bitmap = crop(decode(source, maxPixels, mutable = true), frame)
         var output: File? = null
+        var framedOriginal: File? = null
         val created = mutableListOf<Uri>()
         try {
+            if (frame != null && saveOriginal) {
+                framedOriginal = File.createTempFile("framed-", ".jpg", folder)
+                framedOriginal.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it)) }
+                copyPhotoMetadata(source, framedOriginal, null)
+            }
             output = File.createTempFile("graded-", ".jpg", folder)
             // Chunked processing avoids another full-resolution pixel array.
             val rows = 32
@@ -74,28 +81,15 @@ class PhotoStore(private val context: Context) {
                 bitmap.setPixels(pixels, 0, bitmap.width, 0, y, bitmap.width, height)
             }
             output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it)) }
-            val now = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date())
-            val sourceExif = runCatching { ExifInterface(source) }.getOrNull()
-            ExifInterface(output).apply {
-                listOf(ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_EXPOSURE_TIME,
-                    ExifInterface.TAG_F_NUMBER, ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, ExifInterface.TAG_FOCAL_LENGTH,
-                    ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_FLASH, ExifInterface.TAG_WHITE_BALANCE).forEach { tag ->
-                    sourceExif?.getAttribute(tag)?.let { setAttribute(tag, it) }
-                }
-                setAttribute(ExifInterface.TAG_DATETIME, now)
-                setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
-                setAttribute(ExifInterface.TAG_COLOR_SPACE, "1")
-                setAttribute(ExifInterface.TAG_SOFTWARE, "moment ${studio.moment.camera.BuildConfig.VERSION_NAME}")
-                setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "moment / ${settings.lookId} inspired / intensity=${settings.intensity} warmth=${settings.warmth} tone=${settings.tone}")
-                saveAttributes()
-            }
+            copyPhotoMetadata(source, output, settings)
             coroutineContext.ensureActive()
-            ensureStorage(output.length() + if (saveOriginal) source.length() else 0L)
+            val originalSource = framedOriginal ?: source
+            ensureStorage(output.length() + if (saveOriginal) originalSource.length() else 0L)
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + "_" + UUID.randomUUID().toString().take(8)
             val original = if (saveOriginal) {
-                val mime = runCatching { BitmapFactory.Options().also { it.inJustDecodeBounds = true; BitmapFactory.decodeFile(source.path, it) }.outMimeType }.getOrNull() ?: "image/jpeg"
+                val mime = runCatching { BitmapFactory.Options().also { it.inJustDecodeBounds = true; BitmapFactory.decodeFile(originalSource.path, it) }.outMimeType }.getOrNull() ?: "image/jpeg"
                 val extension = when (mime) { "image/png" -> "png"; "image/webp" -> "webp"; "image/heif", "image/heic" -> "heic"; "image/avif" -> "avif"; else -> "jpg" }
-                publish(source, "MOMENT_${stamp}_original.$extension", mime, "Pictures/moment/Originals").also(created::add)
+                publish(originalSource, "MOMENT_${stamp}_original.$extension", mime, "Pictures/moment/Originals").also(created::add)
             } else null
             val uri = publish(output, "MOMENT_${stamp}_${settings.lookId}.jpg", "image/jpeg", "Pictures/moment").also(created::add)
             SavedPhoto(uri, original, Looks.find(settings.lookId).model)
@@ -105,6 +99,7 @@ class PhotoStore(private val context: Context) {
         } finally {
             bitmap.recycle()
             output?.delete()
+            framedOriginal?.delete()
         }
     }
 
@@ -137,7 +132,36 @@ class PhotoStore(private val context: Context) {
     suspend fun cleanStaleWork() = withContext(Dispatchers.IO) {
         val cutoff = System.currentTimeMillis() - TimeUnitDays
         folder.listFiles()?.filter { it.isFile && it.lastModified() < cutoff &&
-            listOf("capture-", "import-", "graded-").any { prefix -> it.name.startsWith(prefix) } }?.forEach { it.delete() }
+            listOf("capture-", "import-", "graded-", "framed-").any { prefix -> it.name.startsWith(prefix) } }?.forEach { it.delete() }
+    }
+
+    private fun crop(bitmap: Bitmap, frame: CaptureFrame?): Bitmap {
+        if (frame == null) return bitmap
+        try {
+            val area = frame.pixels(bitmap.width, bitmap.height)
+            val clipped = Bitmap.createBitmap(bitmap, area.left, area.top, area.width, area.height)
+            if (clipped !== bitmap) bitmap.recycle()
+            if (clipped.isMutable) return clipped
+            try { return clipped.copy(Bitmap.Config.ARGB_8888, true) } finally { clipped.recycle() }
+        } catch (e: Throwable) { bitmap.recycle(); throw e }
+    }
+
+    private fun copyPhotoMetadata(source: File, output: File, settings: GradeSettings?) {
+        val sourceExif = runCatching { ExifInterface(source) }.getOrNull()
+        ExifInterface(output).apply {
+            listOf(ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_EXPOSURE_TIME,
+                ExifInterface.TAG_F_NUMBER, ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, ExifInterface.TAG_FOCAL_LENGTH,
+                ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_FLASH, ExifInterface.TAG_WHITE_BALANCE).forEach { tag ->
+                sourceExif?.getAttribute(tag)?.let { setAttribute(tag, it) }
+            }
+            setAttribute(ExifInterface.TAG_DATETIME, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date()))
+            setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+            setAttribute(ExifInterface.TAG_COLOR_SPACE, "1")
+            setAttribute(ExifInterface.TAG_SOFTWARE, "moment ${studio.moment.camera.BuildConfig.VERSION_NAME}")
+            setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, if (settings == null) "moment / framed original" else
+                "moment / ${settings.lookId} inspired / intensity=${settings.intensity} warmth=${settings.warmth} tone=${settings.tone}")
+            saveAttributes()
+        }
     }
 
     private fun decode(source: File, maxPixels: Int, mutable: Boolean): Bitmap {

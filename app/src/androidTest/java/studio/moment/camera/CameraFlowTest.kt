@@ -12,6 +12,8 @@ import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.exifinterface.media.ExifInterface
 import androidx.test.core.app.ActivityScenario
@@ -74,6 +76,42 @@ class CameraFlowTest {
             context.contentResolver.openInputStream(square).use { BitmapFactory.decodeStream(it, null, bounds) }
             assertTrue(bounds.outWidth > 0)
             assertEquals(bounds.outWidth, bounds.outHeight)
+        }
+    }
+
+    @Test fun cameraSceneCoversControlsWhileEachPhotoUsesOnlyItsSelectedFrame() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        val prefs = context.getSharedPreferences("moment", Context.MODE_PRIVATE)
+        prefs.edit().clear().putBoolean("original", false).commit()
+        ActivityScenario.launch(MainActivity::class.java).use {
+            waitForCamera()
+            val scene = compose.onNodeWithTag("camera-scene").fetchSemanticsNode().boundsInRoot
+            val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            assertEquals(root, scene)
+            for ((label, ratio) in listOf("3:4" to .75f, "9:16" to .5625f, "1:1" to 1f)) {
+                compose.onNodeWithContentDescription("사진 비율 $label").assertIsDisplayed()
+                val frame = compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot
+                val shutter = compose.onNodeWithTag("shutter").fetchSemanticsNode().boundsInRoot
+                assertTrue(scene.contains(frame.center))
+                assertTrue(scene.bottom >= shutter.bottom)
+                assertTrue(frame.top > scene.top && frame.bottom < scene.bottom)
+                assertEquals(ratio, frame.width / frame.height, .005f)
+                assertEquals(scene, compose.onNodeWithTag("camera-scene").fetchSemanticsNode().boundsInRoot)
+                val previous = prefs.getString("latest", null)
+                compose.onNodeWithContentDescription("사진 촬영").performClick()
+                compose.waitUntil(30_000) { prefs.getString("latest", null) != previous }
+                val uri = Uri.parse(prefs.getString("latest", null))
+                try {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
+                    assertTrue(bounds.outWidth > 0)
+                    assertEquals("Saved crop for $label", ratio, bounds.outWidth.toFloat() / bounds.outHeight, .005f)
+                } finally { context.contentResolver.delete(uri, null, null) }
+                waitForCamera()
+                compose.onNodeWithContentDescription("사진 비율 $label").performClick()
+            }
         }
     }
 

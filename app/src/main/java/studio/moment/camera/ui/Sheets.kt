@@ -122,7 +122,7 @@ internal fun MomentSheet(
                 Sheet.SETTINGS -> {
                     SheetTitle("설정", "촬영과 저장 방식을 선택하세요")
                     SettingSwitch("격자", "구도를 맞추는 안내선을 표시해요", preferences.grid) { value -> onUpdate { it.copy(grid = value) } }
-                    SettingSwitch("원본도 저장", "촬영할 때 원본과 보정한 사진을 한 장씩 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
+                    SettingSwitch("원본도 저장", "선택한 비율로 원본과 보정한 사진을 한 장씩 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
                     SettingSwitch("셀피 좌우 반전", "앞면 카메라 사진을 화면에 보이는 방향으로 저장해요", preferences.mirrorSelfie) { value -> onUpdate { it.copy(mirrorSelfie = value) } }
                     SettingSwitch("촬영 버튼 진동", "촬영 버튼을 누를 때 짧게 진동해요", preferences.haptics) { value -> onUpdate { it.copy(haptics = value) } }
                     SettingSwitch("볼륨 버튼으로 촬영", "촬영 화면에서 볼륨 버튼을 셔터로 사용해요", preferences.volumeShutter) { value -> onUpdate { it.copy(volumeShutter = value) } }
