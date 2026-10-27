@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,13 +33,10 @@ import androidx.compose.ui.unit.sp
 import studio.moment.camera.camera.CameraStatus
 import studio.moment.camera.camera.CaptureMode
 import studio.moment.camera.camera.FrameRatio
-import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.color.Looks
 import studio.moment.camera.color.evidence
 import studio.moment.camera.BuildConfig
 import studio.moment.camera.data.Preferences
-import java.util.Locale
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,17 +44,15 @@ internal fun MomentSheet(
     sheet: Sheet,
     preferences: Preferences,
     camera: CameraStatus,
-    importing: Boolean,
     onDismiss: () -> Unit,
     onUpdate: ((Preferences) -> Preferences) -> Unit,
     onLook: (String) -> Unit,
     onMode: (CaptureMode) -> Unit,
-    onExposure: (Float) -> Unit,
     onAbout: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = Panel, contentColor = Cream,
-        scrimColor = if (sheet == Sheet.TUNE) Color.Transparent else Color.Black.copy(alpha = .45f),
+        scrimColor = Color.Black.copy(alpha = .45f),
         dragHandle = { BottomSheetDefaults.DragHandle(color = Line) }) {
         val sheetView = LocalView.current
         SideEffect {
@@ -95,35 +91,7 @@ internal fun MomentSheet(
                             if (selected) Icon(Icons.Outlined.CheckCircle, "선택됨", tint = Lime, modifier = Modifier.size(19.dp))
                         }
                     }
-                    Footnote("스타일을 바꾸면 강도와 온도, 톤도 해당 스타일의 기본값으로 돌아가요.")
-                }
-                Sheet.TUNE -> {
-                    var adjustment by remember { mutableIntStateOf(0) }
-                    SheetTitle("색감 조절", "아이폰 ${Looks.find(preferences.grade.lookId).model} 스타일")
-                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val tabs = listOf("강도", "온도", "톤") + if (!importing && camera.maxEv > camera.minEv) listOf("노출") else emptyList()
-                        tabs.forEachIndexed { index, label ->
-                            Choice(label, adjustment == index, Modifier.weight(1f)) { adjustment = index }
-                        }
-                    }
-                    when (adjustment) {
-                        0 -> AdjustmentSlider("강도", "${(preferences.grade.intensity * 100).roundToInt()}%", preferences.grade.intensity, 0f..1f, "원본", "스타일") { value ->
-                            onUpdate { it.copy(grade = it.grade.copy(intensity = value)) }
-                        }
-                        1 -> AdjustmentSlider("온도", signed(preferences.grade.warmth * 100), preferences.grade.warmth, -1f..1f, "차갑게", "따뜻하게") { value ->
-                            onUpdate { it.copy(grade = it.grade.copy(warmth = value)) }
-                        }
-                        2 -> AdjustmentSlider("톤", signed(preferences.grade.tone * 100), preferences.grade.tone, -1f..1f, "부드럽게", "깊게") { value ->
-                            onUpdate { it.copy(grade = it.grade.copy(tone = value)) }
-                        }
-                        3 -> AdjustmentSlider("노출", String.format(Locale.US, "%+.1f EV", camera.ev), camera.ev.coerceIn(camera.minEv, camera.maxEv), camera.minEv..camera.maxEv, "어둡게", "밝게", onExposure)
-                    }
-                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { onUpdate { it.copy(grade = GradeSettings(lookId = it.grade.lookId)) }; if (!importing) onExposure(0f) }) {
-                            Icon(Icons.Outlined.RestartAlt, null, Modifier.size(18.dp)); Text("  초기화")
-                        }
-                        Button(onClick = onDismiss, shape = RoundedCornerShape(50)) { Text("완료", modifier = Modifier.padding(horizontal = 12.dp)) }
-                    }
+                    Footnote("스타일별로 조절한 강도와 온도, 대비를 기억해요. 다른 스타일을 골랐다 돌아와도 그대로 사용할 수 있어요.")
                 }
                 Sheet.MODES -> {
                     SheetTitle("촬영 모드", "현재 카메라가 지원하는 모드를 확인하세요")
@@ -148,13 +116,13 @@ internal fun MomentSheet(
                             else if (!available) Text("미지원", color = Muted.copy(alpha = .5f), fontSize = 11.sp)
                         }
                     }
-                    Footnote("야간 촬영은 시간이 걸릴 수 있어요. 저장 안내가 나올 때까지 휴대폰을 움직이지 마세요.")
+                    Footnote("야간 촬영은 시간이 걸릴 수 있어요. 촬영이 끝날 때까지 휴대폰을 움직이지 마세요.")
                     Footnote("지원 모드는 휴대폰과 카메라에 따라 달라요. 기본 카메라의 전용 기능으로 촬영한 사진도 가져와 편집할 수 있어요.")
                 }
                 Sheet.SETTINGS -> {
                     SheetTitle("설정", "촬영과 저장 방식을 선택하세요")
                     SettingSwitch("격자", "구도를 맞추는 안내선을 표시해요", preferences.grid) { value -> onUpdate { it.copy(grid = value) } }
-                    SettingSwitch("원본도 저장", "색감을 적용하기 전 사진도 별도로 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
+                    SettingSwitch("원본도 저장", "촬영할 때 원본과 보정한 사진을 한 장씩 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
                     SettingSwitch("셀피 좌우 반전", "앞면 카메라 사진을 화면에 보이는 방향으로 저장해요", preferences.mirrorSelfie) { value -> onUpdate { it.copy(mirrorSelfie = value) } }
                     SettingSwitch("촬영 버튼 진동", "촬영 버튼을 누를 때 짧게 진동해요", preferences.haptics) { value -> onUpdate { it.copy(haptics = value) } }
                     SettingSwitch("볼륨 버튼으로 촬영", "촬영 화면에서 볼륨 버튼을 셔터로 사용해요", preferences.volumeShutter) { value -> onUpdate { it.copy(volumeShutter = value) } }
@@ -176,7 +144,7 @@ internal fun MomentSheet(
                         Box(Modifier.size(6.dp).background(Lime, CircleShape))
                         Text("  사진은 기기에서 처리해요", color = Cream, fontSize = 13.sp)
                     }
-                    Footnote("모먼트는 사진을 서버로 전송하지 않아요. 선택한 스타일과 설정은 다음 실행에도 유지돼요.")
+                    Footnote("모먼트는 사진을 서버로 전송하지 않아요. 스타일별 색감 조절값과 이 화면의 설정은 다음 실행에도 유지돼요.")
                     TextButton(onClick = onAbout, contentPadding = PaddingValues(0.dp), modifier = Modifier.padding(top = 14.dp)) { Text("앱 정보와 기능 안내") }
                     Text("모먼트 ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = Muted)
                 }
@@ -209,22 +177,6 @@ private fun SheetTitle(title: String, subtitle: String) {
 }
 
 @Composable
-private fun AdjustmentSlider(title: String, valueLabel: String, value: Float, range: ClosedFloatingPointRange<Float>, left: String, right: String, onChange: (Float) -> Unit) {
-    Column(Modifier.padding(vertical = 8.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(title, color = Cream, fontSize = 14.sp)
-            Text(valueLabel, color = Lime, fontSize = 13.sp)
-        }
-        Slider(value = value, onValueChange = onChange, valueRange = range,
-            colors = SliderDefaults.colors(activeTrackColor = Lime, inactiveTrackColor = Line, thumbColor = Lime),
-            modifier = Modifier.fillMaxWidth().semantics { contentDescription = title })
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(left, color = Muted, fontSize = 10.sp); Text(right, color = Muted, fontSize = 10.sp)
-        }
-    }
-}
-
-@Composable
 private fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
@@ -236,8 +188,9 @@ private fun SettingSwitch(title: String, subtitle: String, checked: Boolean, onC
 }
 
 @Composable
-private fun Choice(title: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    OutlinedButton(onClick, modifier = modifier, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) Lime else Line),
+internal fun Choice(title: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    OutlinedButton(onClick, modifier = modifier.semantics { this.selected = selected }, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected) Lime else Line),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) Lime.copy(alpha = .1f) else Color.Transparent)) {
         Text(title, color = if (selected) Lime else Muted, fontSize = 12.sp)
     }
@@ -245,8 +198,6 @@ private fun Choice(title: String, selected: Boolean, modifier: Modifier, onClick
 
 @Composable
 private fun Footnote(text: String) { Text(text, color = Muted, fontSize = 11.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 12.dp)) }
-
-private fun signed(value: Float) = String.format(Locale.US, "%+d", value.roundToInt())
 
 @Composable
 private fun InfoText(title: String, body: String) {

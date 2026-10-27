@@ -85,7 +85,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-internal enum class Sheet { LOOKS, TUNE, SETTINGS, MODES, ABOUT }
+internal enum class Sheet { LOOKS, SETTINGS, MODES, ABOUT }
 
 @Composable
 fun MomentApp(model: MomentViewModel) = MomentTheme {
@@ -112,11 +112,16 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     } }
     val snack = remember { SnackbarHostState() }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
+    var tuning by rememberSaveable { mutableStateOf(false) }
     var front by rememberSaveable { mutableStateOf(false) }
     var mode by rememberSaveable { mutableStateOf(CaptureMode.AUTO) }
     var flash by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var retry by remember { mutableIntStateOf(0) }
-    var comparing by remember { mutableStateOf(false) }
+    var compareLocked by remember { mutableStateOf(false) }
+    var comparePressed by remember { mutableStateOf(false) }
+    val comparing = compareLocked || comparePressed
+    fun endComparison() { compareLocked = false; comparePressed = false }
+    fun selectLook(id: String) { endComparison(); model.selectLook(id) }
     var focus by remember { mutableStateOf<Offset?>(null) }
     var photoOpen by remember { mutableStateOf(false) }
     var latestBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -148,14 +153,14 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 
     fun triggerShutter() {
         if (busy || !gradeReady || (imported == null && !status.ready)) return
-        comparing = false
+        endComparison()
         engine.setGrade(lut, false)
         if (prefs.haptics) hostView.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
         save { if (imported != null) model.saveImport() else model.capture(engine) }
     }
 
     val volumeAction by rememberUpdatedState(newValue = {
-        if (!prefs.volumeShutter || imported != null || sheet != null || photoOpen || !permission ||
+        if (!prefs.volumeShutter || imported != null || tuning || sheet != null || photoOpen || !permission ||
             !owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) false
         else if (countdown > 0) { model.cancelTimer(); true }
         else if (status.ready) { triggerShutter(); true }
@@ -185,32 +190,41 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                 permission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                 latestRefresh++
             }
-            if (event == Lifecycle.Event.ON_STOP) { model.cancelTimer(); comparing = false }
+            if (event == Lifecycle.Event.ON_STOP) { model.cancelTimer(); endComparison() }
         }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer); engine.close() }
     }
-    BackHandler(countdown > 0 || imported != null) {
-        if (countdown > 0) model.cancelTimer() else model.closeImport()
+    BackHandler(tuning || countdown > 0 || imported != null) {
+        when {
+            tuning -> { tuning = false; endComparison() }
+            countdown > 0 -> model.cancelTimer()
+            else -> { endComparison(); model.closeImport() }
+        }
     }
 
     Surface(color = Ink, modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
-            val contentHeight = maxOf(maxHeight, 680.dp * textScale)
+            val contentHeight = maxOf(maxHeight, (if (tuning) 420.dp else 680.dp) * textScale)
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState(), enabled = maxHeight < contentHeight).height(contentHeight)) {
-                Row(Modifier.fillMaxWidth().height(62.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().height((if (tuning) 48.dp else 62.dp) * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text("모먼트", fontFamily = FontFamily.Serif, fontSize = 30.sp, letterSpacing = (-.5).sp, color = Cream)
-                        Box(Modifier.padding(start = 5.dp, bottom = 12.dp).size(6.dp).background(Lime, CircleShape))
+                        Text(if (tuning) "색감 조절" else "모먼트", fontFamily = FontFamily.Serif, fontSize = if (tuning) 22.sp else 30.sp, letterSpacing = (-.5).sp, color = Cream)
+                        if (!tuning) Box(Modifier.padding(start = 5.dp, bottom = 12.dp).size(6.dp).background(Lime, CircleShape))
                     }
-                    ToolIcon(Icons.Outlined.AddPhotoAlternate, "사진 가져오기", enabled = !busy) {
-                        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    if (tuning) {
+                        TextButton(onClick = { tuning = false; endComparison() }) { Text("완료", color = Lime) }
+                    } else {
+                        ToolIcon(Icons.Outlined.AddPhotoAlternate, "사진 가져오기", enabled = !busy) {
+                            picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }
+                        ToolIcon(Icons.Outlined.Tune, "설정", enabled = !busy) { sheet = Sheet.SETTINGS }
                     }
-                    ToolIcon(Icons.Outlined.Tune, "설정", enabled = !busy) { sheet = Sheet.SETTINGS }
                 }
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
-                    val frameWidth = minOf(maxWidth, maxHeight * prefs.ratio.value)
-                    Box(Modifier.width(frameWidth).aspectRatio(prefs.ratio.value).clip(RoundedCornerShape(22.dp)).background(Panel)) {
+                    val frameRatio = importedOriginal?.takeIf { imported != null }?.let { it.width.toFloat() / it.height } ?: prefs.ratio.value
+                    val frameWidth = minOf(maxWidth, maxHeight * frameRatio)
+                    Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview").clip(RoundedCornerShape(22.dp)).background(Panel)) {
                         when {
                             imported != null -> {
                                 val bitmap = if (comparing) importedOriginal else importedPreview ?: importedOriginal
@@ -228,7 +242,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                     .pointerInput(status.ready, busy) {
                                         detectTransformGestures { _, _, zoom, _ -> if (status.ready && !busy) engine.zoom(engine.status.value.zoom * zoom) }
                                     })
-                                if (prefs.grid && status.ready) GridOverlay()
+                                if (prefs.grid && status.ready && !tuning) GridOverlay()
                                 focus?.let { point -> Canvas(Modifier.fillMaxSize()) {
                                     val side = 66.dp.toPx()
                                     drawRoundRect(if (status.focus == FocusState.FAILED) Color(0xFFF2A99D) else if (status.focus == FocusState.FOCUSING) Cream else Lime,
@@ -242,7 +256,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                             }
                             else -> PermissionScene(permissionDenied) { requestCamera() }
                         }
-                        if (status.focus == FocusState.LOCKED && imported == null) TextButton(
+                        if (!tuning && status.focus == FocusState.LOCKED && imported == null) TextButton(
                             onClick = engine::unlockFocus, enabled = !busy,
                             modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp).background(Color.Black.copy(alpha = .5f), RoundedCornerShape(50)),
                         ) { Icon(Icons.Outlined.Lock, null, Modifier.size(14.dp)); Text(" 초점 고정 해제", fontSize = 11.sp) }
@@ -250,7 +264,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                             .background(Color.Black.copy(alpha = .65f), RoundedCornerShape(12.dp)).padding(10.dp)) {
                             Text("색감을 적용하는 중이에요", color = Cream, fontSize = 11.sp)
                         }
-                        if (permission && imported == null && status.ready) {
+                        if (!tuning && permission && imported == null && status.ready) {
                             Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .5f), Color.Transparent))).padding(8.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 GlassIcon(when (flash) { ImageCapture.FLASH_MODE_ON -> Icons.Outlined.FlashOn; ImageCapture.FLASH_MODE_AUTO -> Icons.Outlined.FlashAuto; else -> Icons.Outlined.FlashOff },
@@ -263,16 +277,16 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                 }
                             }
                         }
-                        if (imported != null) IconButton(onClick = model::closeImport, enabled = !busy, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color.Black.copy(alpha = .4f), CircleShape)) {
+                        if (!tuning && imported != null) IconButton(onClick = { endComparison(); model.closeImport() }, enabled = !busy, modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color.Black.copy(alpha = .4f), CircleShape)) {
                             Icon(Icons.Outlined.Close, "가져온 사진 닫기", tint = Cream)
                         }
-                        if (status.ready || imported != null) {
+                        if (!tuning && (status.ready || imported != null)) {
                             Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .55f)))).padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(if (comparing) "원본" else "아이폰 ${Looks.find(prefs.grade.lookId).model} 스타일", color = Cream,
                                     fontSize = 12.sp, letterSpacing = .7.sp, modifier = Modifier.padding(start = 4.dp))
-                                CompareButton(onCompare = { comparing = it })
+                                CompareButton(comparing, !busy, onToggle = { compareLocked = !compareLocked }, onPress = { comparePressed = it })
                             }
                         }
                         if (countdown > 0) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .18f)).clickable(onClick = model::cancelTimer), contentAlignment = Alignment.Center) {
@@ -281,61 +295,75 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(45.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    if (imported == null) {
-                        TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Box(Modifier.size(5.dp).background(if (status.ready) Lime else Muted, CircleShape))
-                            Text("  ${status.activeMode.label}", fontSize = 12.sp, color = Cream)
-                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
-                        }
-                        Row(Modifier.weight(1f).padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
-                            zooms.take(5).forEach { zoom ->
-                                val selected = abs(status.zoom - zoom) < .08f
-                                TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
-                                    modifier = Modifier.height(36.dp).widthIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 7.dp),
-                                    colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Muted)) {
-                                    Text("${formatZoom(zoom)}배", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                if (tuning) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp * textScale).padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(if (comparing) "원본" else "아이폰 ${Looks.find(prefs.grade.lookId).model} 스타일", color = Cream,
+                            fontSize = 12.sp, modifier = Modifier.weight(1f).padding(end = 8.dp))
+                        CompareButton(comparing, status.ready || imported != null,
+                            onToggle = { compareLocked = !compareLocked }, onPress = { comparePressed = it })
+                    }
+                    TunePanel(prefs, status, imported != null,
+                        onUpdate = { change -> endComparison(); model.update(change) },
+                        onExposure = { value -> endComparison(); engine.exposure(value) })
+                } else {
+                    Row(Modifier.fillMaxWidth().height(45.dp * textScale).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        if (imported == null) {
+                            TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Box(Modifier.size(5.dp).background(if (status.ready) Lime else Muted, CircleShape))
+                                Text("  ${status.activeMode.label}", fontSize = 12.sp, color = Cream)
+                                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
+                            }
+                            Row(Modifier.weight(1f).padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                val zooms = (listOf(status.minZoom).filter { it < .95f } + listOf(1f, 2f, 3f, 5f).filter { it >= status.minZoom && it <= status.maxZoom }).distinct()
+                                zooms.take(5).forEach { zoom ->
+                                    val selected = abs(status.zoom - zoom) < .08f
+                                    TextButton(onClick = { engine.zoom(zoom) }, enabled = status.ready && !busy,
+                                        modifier = Modifier.height(36.dp).widthIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 7.dp),
+                                        colors = ButtonDefaults.textButtonColors(contentColor = if (selected) Lime else Muted)) {
+                                        Text("${formatZoom(zoom)}배", fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                                    }
                                 }
                             }
+                        } else Text("가져온 사진 편집", color = Muted, fontSize = 12.sp)
+                        Text(if (imported == null && status.ready) "${formatZoom(status.zoom)}배" else "강도 ${(prefs.grade.intensity * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
+                    }
+                    LookStrip(prefs.grade.lookId, !busy, ::selectLook)
+                    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * textScale).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f)) {
+                            Text("${Looks.find(prefs.grade.lookId).title}  ", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
+                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
                         }
-                    } else Text("가져온 사진 편집", color = Muted, fontSize = 12.sp)
-                    Text(if (imported == null && status.ready) "${formatZoom(status.zoom)}배" else "강도 ${(prefs.grade.intensity * 100).roundToInt()}%", color = Muted, fontSize = 11.sp)
+                        TextButton(onClick = { endComparison(); tuning = true }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
+                            Icon(Icons.Outlined.Tune, null, Modifier.size(15.dp), tint = Lime)
+                            Text("  색감 조절", color = Lime, fontSize = 12.sp)
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().height(96.dp * textScale).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(13.dp))
+                            .clickable(enabled = !busy, role = Role.Button, onClick = {
+                                if (latest != null) photoOpen = true else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            }).semantics { contentDescription = if (latest != null) "최근 사진" else "사진 가져오기" }, contentAlignment = Alignment.Center) {
+                            if (latestBitmap != null) Image(latestBitmap!!.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            else Icon(Icons.Outlined.PhotoLibrary, null, tint = Muted)
+                        }
+                        Shutter(enabled = !busy && gradeReady && (status.ready || imported != null), busy = busy, countdown = countdown,
+                            importing = imported != null, onClick = ::triggerShutter)
+                        ToolIcon(if (imported != null) Icons.Outlined.Close else Icons.Outlined.Cameraswitch,
+                            if (imported != null) "사진 편집 닫기" else "카메라 전환", enabled = !busy && (imported != null || status.hasFront && status.hasBack)) {
+                            endComparison()
+                            if (imported != null) model.closeImport() else front = !status.frontFacing
+                        }
+                    }
+                    Text(if (busy) stage.label else if (imported != null) "저장하면 새 사진이 만들어져요" else "화면을 길게 누르면 초점을 고정할 수 있어요", color = Muted,
+                        fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
                 }
-                LookStrip(prefs.grade.lookId, !busy, model::selectLook)
-                Row(Modifier.fillMaxWidth().heightIn(min = 40.dp * textScale).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { sheet = Sheet.LOOKS }, enabled = !busy, contentPadding = PaddingValues(0.dp), modifier = Modifier.weight(1f)) {
-                        Text("${Looks.find(prefs.grade.lookId).title}  ", color = Muted, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
-                        Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Muted)
-                    }
-                    TextButton(onClick = { sheet = Sheet.TUNE }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
-                        Icon(Icons.Outlined.Tune, null, Modifier.size(15.dp), tint = Lime)
-                        Text("  색감 조절", color = Lime, fontSize = 12.sp)
-                    }
-                }
-                Row(Modifier.fillMaxWidth().height(96.dp * textScale).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(48.dp).clip(RoundedCornerShape(13.dp)).background(Panel).border(1.dp, Line, RoundedCornerShape(13.dp))
-                        .clickable(enabled = !busy, role = Role.Button, onClick = {
-                            if (latest != null) photoOpen = true else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        }).semantics { contentDescription = if (latest != null) "최근 사진" else "사진 가져오기" }, contentAlignment = Alignment.Center) {
-                        if (latestBitmap != null) Image(latestBitmap!!.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        else Icon(Icons.Outlined.PhotoLibrary, null, tint = Muted)
-                    }
-                    Shutter(enabled = !busy && gradeReady && (status.ready || imported != null), busy = busy, countdown = countdown,
-                        importing = imported != null, onClick = ::triggerShutter)
-                    ToolIcon(if (imported != null) Icons.Outlined.Close else Icons.Outlined.Cameraswitch,
-                        if (imported != null) "사진 편집 닫기" else "카메라 전환", enabled = !busy && (imported != null || status.hasFront && status.hasBack)) {
-                        if (imported != null) model.closeImport() else front = !status.frontFacing
-                    }
-                }
-                Text(if (busy) stage.label else if (imported != null) "저장하면 새 사진이 만들어져요" else "화면을 길게 누르면 초점을 고정할 수 있어요", color = Muted,
-                    fontSize = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
             }
             SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).padding(12.dp))
         }
         sheet?.let { selected ->
-            MomentSheet(selected, prefs, status, imported != null, onDismiss = { sheet = null }, onUpdate = model::update,
-                onLook = model::selectLook, onMode = { mode = it; sheet = null }, onExposure = engine::exposure,
+            MomentSheet(selected, prefs, status, onDismiss = { sheet = null }, onUpdate = model::update,
+                onLook = ::selectLook, onMode = { mode = it; sheet = null },
                 onAbout = { sheet = Sheet.ABOUT })
         }
         if (photoOpen && latest != null) PhotoDialog(latest!!, latestBitmap, { photoOpen = false }) { intent ->
@@ -368,12 +396,22 @@ private fun LookStrip(selected: String, enabled: Boolean, onSelect: (String) -> 
 
 @Composable
 private fun Shutter(enabled: Boolean, busy: Boolean, countdown: Int, importing: Boolean, onClick: () -> Unit) {
+    if (importing) {
+        Button(onClick, enabled = enabled, shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Ink),
+            modifier = Modifier.heightIn(min = 56.dp).testTag("shutter").semantics { contentDescription = "편집한 사진 저장" }) {
+            if (busy) CircularProgressIndicator(color = Lime, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Outlined.Check, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (busy) "저장 중" else "사진 저장", fontSize = 14.sp)
+        }
+        return
+    }
     Box(Modifier.size(80.dp).border(1.5.dp, if (enabled || busy) Cream else Line, CircleShape).padding(6.dp)
         .clip(CircleShape).background(if (enabled) Cream else Panel).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .testTag("shutter").semantics { contentDescription = if (importing) "편집한 사진 저장" else "사진 촬영" }, contentAlignment = Alignment.Center) {
+        .testTag("shutter").semantics { contentDescription = "사진 촬영" }, contentAlignment = Alignment.Center) {
         when {
             busy && countdown == 0 -> CircularProgressIndicator(color = Lime, modifier = Modifier.size(25.dp), strokeWidth = 2.dp)
-            importing -> Icon(Icons.Outlined.Check, null, tint = if (enabled) Ink else Muted, modifier = Modifier.size(29.dp))
             else -> Box(Modifier.size(8.dp).background(if (enabled) Ink else Muted, CircleShape))
         }
     }
@@ -402,18 +440,17 @@ private fun GlassText(text: String, label: String, enabled: Boolean, onClick: ()
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CompareButton(onCompare: (Boolean) -> Unit) {
+private fun CompareButton(comparing: Boolean, enabled: Boolean, onToggle: () -> Unit, onPress: (Boolean) -> Unit) {
     val interactions = remember { MutableInteractionSource() }
     val pressed by interactions.collectIsPressedAsState()
-    var locked by remember { mutableStateOf(false) }
-    LaunchedEffect(pressed, locked) { onCompare(pressed || locked) }
-    DisposableEffect(Unit) { onDispose { onCompare(false) } }
-    Row(Modifier.heightIn(min = 44.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .3f))
+    LaunchedEffect(pressed) { onPress(pressed) }
+    DisposableEffect(Unit) { onDispose { onPress(false) } }
+    Row(Modifier.heightIn(min = 48.dp).testTag("original-compare").clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .3f))
         .combinedClickable(interactionSource = interactions, indication = null, role = Role.Button,
-            onClick = { locked = !locked }, onLongClick = {}, onLongClickLabel = "누르는 동안 원본 보기")
+            enabled = enabled, onClick = onToggle, onLongClick = {}, onLongClickLabel = "누르는 동안 원본 보기")
         .padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.Compare, null, Modifier.size(15.dp), tint = if (pressed || locked) Lime else Cream)
-        Text(if (locked) "  색감 보기" else "  원본 비교", color = Cream, fontSize = 11.sp)
+        Icon(Icons.Outlined.Compare, null, Modifier.size(15.dp), tint = if (comparing) Lime else Cream)
+        Text(if (comparing) "  색감 보기" else "  원본 비교", color = if (enabled) Cream else Muted, fontSize = 11.sp)
     }
 }
 

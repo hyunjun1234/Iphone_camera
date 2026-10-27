@@ -19,17 +19,32 @@ data class Preferences(
 class PreferenceStore(context: Context) {
     private val prefs = context.getSharedPreferences("moment", Context.MODE_PRIVATE)
     fun read() = Preferences(
-        grade = GradeSettings(Looks.find(prefs.getString("look", "xs") ?: "xs").id, safeFloat("intensity", 1f, 0f..1f),
-            safeFloat("warmth", 0f, -1f..1f), safeFloat("tone", 0f, -1f..1f)),
+        grade = readGrade(prefs.getString("look", "xs") ?: "xs"),
         grid = prefs.getBoolean("grid", true), saveOriginal = prefs.getBoolean("original", true),
         mirrorSelfie = prefs.getBoolean("mirror", true), haptics = prefs.getBoolean("haptics", true),
         volumeShutter = prefs.getBoolean("volumeShutter", true),
         ratio = FrameRatio.entries.firstOrNull { it.name == prefs.getString("ratio", "CLASSIC") } ?: FrameRatio.CLASSIC,
         timer = prefs.getInt("timer", 0).takeIf { it in listOf(0, 3, 10) } ?: 0,
     )
+    fun readGrade(lookId: String): GradeSettings {
+        val id = Looks.find(lookId).id
+        val prefix = "grade.$id."
+        // Preserve the active style's adjustments when upgrading from the single-style format.
+        val keyPrefix = when {
+            prefs.contains("${prefix}intensity") -> prefix
+            id == Looks.find(prefs.getString("look", "xs") ?: "xs").id -> ""
+            else -> return GradeSettings(lookId = id)
+        }
+        return GradeSettings(id, safeFloat("${keyPrefix}intensity", 1f, 0f..1f),
+            safeFloat("${keyPrefix}warmth", 0f, -1f..1f), safeFloat("${keyPrefix}tone", 0f, -1f..1f))
+    }
+
     fun write(settings: Preferences) {
         prefs.edit().putString("look", settings.grade.lookId).putFloat("intensity", settings.grade.intensity)
             .putFloat("warmth", settings.grade.warmth).putFloat("tone", settings.grade.tone)
+            .putFloat("grade.${settings.grade.lookId}.intensity", settings.grade.intensity)
+            .putFloat("grade.${settings.grade.lookId}.warmth", settings.grade.warmth)
+            .putFloat("grade.${settings.grade.lookId}.tone", settings.grade.tone)
             .putBoolean("grid", settings.grid).putBoolean("original", settings.saveOriginal)
             .putBoolean("mirror", settings.mirrorSelfie).putBoolean("haptics", settings.haptics)
             .putBoolean("volumeShutter", settings.volumeShutter)

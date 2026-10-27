@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import studio.moment.camera.camera.CameraEngine
 import studio.moment.camera.color.ColorLut
-import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.color.compositeOnWhite
 import studio.moment.camera.data.PhotoStore
 import studio.moment.camera.data.PreferenceStore
@@ -104,12 +103,18 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
     fun update(transform: (Preferences) -> Preferences) {
         if (mutableBusy.value) return
         val next = transform(mutablePreferences.value)
+        if (next == mutablePreferences.value) return
         if (next.grade != mutablePreferences.value.grade) mutableGradeReady.value = false
         mutablePreferences.value = next
         storage.write(next)
     }
 
-    fun selectLook(id: String) = update { it.copy(grade = GradeSettings(lookId = id)) }
+    fun selectLook(id: String) {
+        if (mutableBusy.value || id == mutablePreferences.value.grade.lookId) return
+        // Also migrate an untouched selection from older versions before switching away.
+        storage.write(mutablePreferences.value)
+        update { it.copy(grade = storage.readGrade(id)) }
+    }
     fun notice(message: String) { mutableMessage.tryEmit(message) }
 
     fun capture(engine: CameraEngine) {
@@ -127,7 +132,7 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
                 setStage(WorkStage.SAVING)
                 val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal)
                 mutableLatest.value = result.uri; storage.latestUri = result.uri.toString()
-                notice("사진을 갤러리에 저장했어요.")
+                notice(if (result.original != null) "원본과 보정한 사진을 갤러리에 저장했어요." else "보정한 사진을 갤러리에 저장했어요.")
             } catch (cancel: CancellationException) { throw cancel }
             catch (e: OutOfMemoryError) { notice(userMessage(e, "사진을 처리하지 못했어요.")) }
             catch (e: Exception) { notice(userMessage(e, "사진을 저장하지 못했어요. 저장 공간을 확인하고 다시 촬영해 주세요.")) }
