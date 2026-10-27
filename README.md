@@ -2,6 +2,8 @@
 
 아이폰 기종에서 영감을 얻은 색감을 골라 사진을 찍고 편집하는 안드로이드 앱입니다. 화면과 안내 문구는 한국어로 제공하며 Android 8.0(API 26) 이상에서 실행할 수 있습니다. Kotlin, Jetpack Compose, CameraX로 만들었습니다.
 
+테스트 파일은 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.1)에서 받을 수 있습니다. Play Console에는 [서명된 AAB](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.aab)를 업로드하고, 휴대폰에 직접 설치하려면 [APK](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.apk)를 사용하세요.
+
 현재 색감은 직접 조정한 프리셋입니다. 실제 아이폰 사진에서 측정한 보정값은 아닙니다. [자료 출처와 한계](docs/COLOR_EVIDENCE.md)에 사양 조사, 촬영 리뷰, 앱에서 정한 수치를 구분해 정리했습니다.
 
 아이폰 8을 포함한 9개 기종의 공개 수치와 프리셋 조사 결과는 [공개 색감 설정값 조사](docs/PUBLIC_COLOR_RECIPES.md)에서 확인할 수 있습니다. 원문 앱의 설정값이며 모먼트에 그대로 입력하는 값은 아닙니다. 직접 확인한 숫자와 파일을 확보하지 못한 후보를 구분해 기록했습니다.
@@ -54,7 +56,7 @@ python3 scripts/prepare_play_release.py
 
 서명 설정이 없으면 중단하며, 결과는 `app/build/outputs/play/`에 저장합니다. 새 앱의 키 생성, 기존 키 사용법, Console 등록 순서는 [내부 테스트 배포 안내](docs/PLAY_INTERNAL_TESTING.md)에 정리했습니다. 키와 비밀번호는 Git 저장소 밖에 보관합니다.
 
-현재는 서명 파일 준비와 로컬 검증까지 완료했으며, Play Console 업로드와 테스트 설치 링크 발급은 계정 접근 연결이 필요합니다.
+GitHub에 첨부된 AAB를 받아 Console에서 직접 내부 테스트로 등록할 수 있습니다. GitHub 파일 배포와 Google Play 테스트 게시는 별도 절차입니다.
 
 ## 저장 방식과 제한
 

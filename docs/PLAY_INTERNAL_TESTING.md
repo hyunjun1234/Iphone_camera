@@ -1,6 +1,9 @@
 # Google Play 내부 테스트
 
-2026-10-27 기준으로 업로드용 키로 서명한 AAB와 APK를 준비했습니다. Play Console 계정 접근은 아직 연결되지 않았으므로 Google Play에 업로드하거나 테스트 설치 링크를 발급한 상태는 아닙니다.
+업로드용 키로 서명한 AAB와 APK를 [GitHub Releases](https://github.com/hyunjun1234/Iphone_camera/releases/tag/v0.2.1)에서 받을 수 있습니다. GitHub에 파일을 올리는 작업과 Play Console에 내부 테스트 버전을 게시하는 작업은 별개입니다. Console 등록은 아래 순서대로 직접 진행합니다.
+
+- [Play Console 업로드용 AAB 다운로드](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.aab)
+- [직접 설치용 APK 다운로드](https://github.com/hyunjun1234/Iphone_camera/releases/download/v0.2.1/moment-0.2.1-3.apk)
 
 ## 이번 배포 파일
 
