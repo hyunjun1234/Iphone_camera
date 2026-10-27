@@ -131,7 +131,7 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
                 val captured = engine.takePicture(engine.status.value.frontFacing && settings.mirrorSelfie)
                 source = captured.file
                 setStage(WorkStage.SAVING)
-                val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal, captured.frame)
+                val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal, captured.frame, settings.photoQuality)
                 mutableLatest.value = result.uri; storage.latestUri = result.uri.toString()
                 notice(if (result.original != null) "원본과 보정한 사진을 갤러리에 저장했어요." else "보정한 사진을 갤러리에 저장했어요.")
             } catch (cancel: CancellationException) { throw cancel }
@@ -177,7 +177,7 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
         setStage(WorkStage.SAVING)
         viewModelScope.launch {
             try {
-                val result = photos.export(source, snapshotLut, settings.grade, false)
+                val result = photos.export(source, snapshotLut, settings.grade, false, quality = settings.photoQuality)
                 mutableLatest.value = result.uri; storage.latestUri = result.uri.toString()
                 setStage(WorkStage.IDLE)
                 closeImport()

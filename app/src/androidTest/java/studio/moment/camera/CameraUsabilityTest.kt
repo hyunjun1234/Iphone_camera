@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.lifecycle.Lifecycle
@@ -20,6 +21,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import studio.moment.camera.data.PhotoQuality
 
 @RunWith(AndroidJUnit4::class)
 class CameraUsabilityTest {
@@ -129,11 +131,18 @@ class CameraUsabilityTest {
             compose.onNodeWithTag("zoom-toggle").performClick()
             val slider = compose.onNodeWithTag("zoom-slider").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
             assertTrue(slider.top >= frame.bottom)
+            val presets = compose.onNodeWithTag("zoom-presets").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(presets.top >= frame.bottom && presets.bottom <= slider.top)
             assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+            for (step in listOf(1, 2, 3, 5, 10)) {
+                compose.onNodeWithContentDescription("배율 ${step}배").performScrollTo().performClick()
+                waitForZoom("${step}배")
+                assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+            }
             compose.onNodeWithTag("zoom-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("2배").fetchSemanticsNodes().isNotEmpty() }
+            waitForZoom("2배")
             compose.onNodeWithTag("zoom-reset").performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("1배").fetchSemanticsNodes().isNotEmpty() }
+            waitForZoom("1배")
             sendCameraKey(compose, scenario, android.view.KeyEvent.KEYCODE_BACK)
             compose.onNodeWithTag("zoom-slider").assertDoesNotExist()
             compose.onNodeWithTag("photo-preview").performTouchInput {
@@ -155,6 +164,43 @@ class CameraUsabilityTest {
             compose.onNodeWithTag("zoom-toggle").assertIsDisplayed()
             compose.onNodeWithTag("original-compare").assertIsDisplayed()
             assertEquals(frame, compose.onNodeWithTag("photo-preview").fetchSemanticsNode().boundsInRoot)
+        }
+    }
+
+    @Test fun photoQualityCanBeChangedWithoutLosingTheCameraAndSurvivesRestart() {
+        val saved = mutableListOf<Uri>()
+        try { ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitForCamera()
+            for (quality in PhotoQuality.entries) {
+                compose.onNodeWithContentDescription("설정").performClick()
+                compose.onNodeWithText("사진 화질").assertIsDisplayed()
+                compose.onNodeWithText(quality.label).performClick()
+                compose.waitUntil { prefs.getString("photoQuality", null) == quality.name }
+                // The settings dialog owns window focus, so dismiss it through its accessibility action.
+                compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss)).onFirst()
+                    .performSemanticsAction(SemanticsActions.Dismiss) { it() }
+                waitForCamera()
+                val previous = prefs.getString("latest", null)
+                compose.onNodeWithContentDescription("사진 촬영").performClick()
+                compose.waitUntil(30_000) { prefs.getString("latest", null)?.let { it != previous } == true }
+                val uri = Uri.parse(prefs.getString("latest", null)); saved += uri
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it, null, bounds) }
+                assertTrue(bounds.outWidth > 0 && bounds.outWidth.toLong() * bounds.outHeight <= quality.maxPixels)
+                assertEquals(.75f, bounds.outWidth.toFloat() / bounds.outHeight, .01f)
+                waitForCamera()
+            }
+            scenario.recreate()
+            waitForCamera()
+            compose.onNodeWithContentDescription("설정").performClick()
+            compose.onNodeWithText("높음").assertIsSelected()
+        } } finally { saved.forEach { context.contentResolver.delete(it, null, null) } }
+    }
+
+    private fun waitForZoom(label: String) {
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(hasTestTag("zoom-reset") and
+                SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, label)).fetchSemanticsNodes().isNotEmpty()
         }
     }
 

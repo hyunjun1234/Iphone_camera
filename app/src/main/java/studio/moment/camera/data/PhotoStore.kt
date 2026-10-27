@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ColorSpace
 import android.graphics.Matrix
+import android.graphics.ImageDecoder
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -26,6 +28,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
+import kotlin.math.sqrt
 
 data class SavedPhoto(val uri: Uri, val original: Uri?, val model: String)
 
@@ -55,17 +58,16 @@ class PhotoStore(private val context: Context) {
         } catch (e: Exception) { file.delete(); throw e }
     }
 
-    suspend fun export(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean, frame: CaptureFrame? = null): SavedPhoto = withContext(Dispatchers.IO) {
-        // Leave room for rotation, a mutable copy, the UI and camera buffers on small heaps.
-        val maxPixels = minOf(16_000_000L, Runtime.getRuntime().maxMemory() / 16).toInt().coerceAtLeast(1_000_000)
-        val bitmap = crop(decode(source, maxPixels, mutable = true), frame)
+    suspend fun export(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean,
+                       frame: CaptureFrame? = null, quality: PhotoQuality = PhotoQuality.STANDARD): SavedPhoto = withContext(Dispatchers.IO) {
+        val bitmap = decodeExport(source, frame, quality)
         var output: File? = null
         var framedOriginal: File? = null
         val created = mutableListOf<Uri>()
         try {
             if (frame != null && saveOriginal) {
                 framedOriginal = File.createTempFile("framed-", ".jpg", folder)
-                framedOriginal.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it)) }
+                framedOriginal.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality.jpegQuality, it)) }
                 copyPhotoMetadata(source, framedOriginal, null)
             }
             output = File.createTempFile("graded-", ".jpg", folder)
@@ -80,7 +82,7 @@ class PhotoStore(private val context: Context) {
                 lut.apply(pixels, bitmap.width * height)
                 bitmap.setPixels(pixels, 0, bitmap.width, 0, y, bitmap.width, height)
             }
-            output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 96, it)) }
+            output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality.jpegQuality, it)) }
             copyPhotoMetadata(source, output, settings)
             coroutineContext.ensureActive()
             val originalSource = framedOriginal ?: source
@@ -144,6 +146,37 @@ class PhotoStore(private val context: Context) {
             if (clipped.isMutable) return clipped
             try { return clipped.copy(Bitmap.Config.ARGB_8888, true) } finally { clipped.recycle() }
         } catch (e: Throwable) { bitmap.recycle(); throw e }
+    }
+
+    private fun decodeExport(source: File, frame: CaptureFrame?, quality: PhotoQuality): Bitmap {
+        // Bound the entire decoded image, leaving memory for camera buffers and colour processing.
+        val memoryPixels = (Runtime.getRuntime().maxMemory() / 16).coerceIn(1_000_000L, Int.MAX_VALUE.toLong()).toInt()
+        if (Build.VERSION.SDK_INT < 28) {
+            return crop(decode(source, minOf(quality.maxPixels, memoryPixels), mutable = true), frame)
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(source.path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outMimeType == "image/gif")
+            throw UserMessageException("이 사진 형식은 지원하지 않아요. JPG, PNG 등 정지 사진을 선택해 주세요.")
+        return ImageDecoder.decodeBitmap(ImageDecoder.createSource(source)) { decoder, info, _ ->
+            if (info.mimeType == "image/gif") throw UserMessageException("움직이는 사진은 지원하지 않아요. JPG, PNG 등 정지 사진을 선택해 주세요.")
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            decoder.isMutableRequired = true
+            decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+            // ImageDecoder supplies upright dimensions and applies EXIF orientation itself.
+            val width = info.size.width
+            val height = info.size.height
+            val area = frame?.pixels(width, height)
+            val outputPixels = if (area == null) width.toLong() * height else area.width.toLong() * area.height
+            val scale = minOf(1.0, sqrt(quality.maxPixels.toDouble() / outputPixels),
+                sqrt(memoryPixels.toDouble() / (width.toLong() * height)))
+            val targetWidth = (width * scale).toInt().coerceAtLeast(1)
+            val targetHeight = (height * scale).toInt().coerceAtLeast(1)
+            decoder.setTargetSize(targetWidth, targetHeight)
+            frame?.pixels(targetWidth, targetHeight)?.let {
+                decoder.crop = Rect(it.left, it.top, it.left + it.width, it.top + it.height)
+            }
+        }
     }
 
     private fun copyPhotoMetadata(source: File, output: File, settings: GradeSettings?) {

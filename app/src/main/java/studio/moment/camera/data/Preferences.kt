@@ -14,6 +14,7 @@ data class Preferences(
     val volumeShutter: Boolean = true,
     val ratio: FrameRatio = FrameRatio.CLASSIC,
     val timer: Int = 0,
+    val photoQuality: PhotoQuality = PhotoQuality.STANDARD,
 )
 
 class PreferenceStore(context: Context) {
@@ -25,6 +26,7 @@ class PreferenceStore(context: Context) {
         volumeShutter = prefs.getBoolean("volumeShutter", true),
         ratio = FrameRatio.entries.firstOrNull { it.name == prefs.getString("ratio", "CLASSIC") } ?: FrameRatio.CLASSIC,
         timer = prefs.getInt("timer", 0).takeIf { it in listOf(0, 3, 10) } ?: 0,
+        photoQuality = PhotoQuality.entries.firstOrNull { it.name == prefs.getString("photoQuality", null) } ?: PhotoQuality.STANDARD,
     )
     fun readGrade(lookId: String): GradeSettings {
         val id = Looks.find(lookId).id
@@ -48,7 +50,8 @@ class PreferenceStore(context: Context) {
             .putBoolean("grid", settings.grid).putBoolean("original", settings.saveOriginal)
             .putBoolean("mirror", settings.mirrorSelfie).putBoolean("haptics", settings.haptics)
             .putBoolean("volumeShutter", settings.volumeShutter)
-            .putString("ratio", settings.ratio.name).putInt("timer", settings.timer).apply()
+            .putString("ratio", settings.ratio.name).putInt("timer", settings.timer)
+            .putString("photoQuality", settings.photoQuality.name).apply()
     }
     var latestUri: String?
         get() = prefs.getString("latest", null)

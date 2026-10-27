@@ -11,6 +11,7 @@ import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.color.Looks
 import studio.moment.camera.data.PreferenceStore
 import studio.moment.camera.data.Preferences
+import studio.moment.camera.data.PhotoQuality
 
 @RunWith(AndroidJUnit4::class)
 class PreferenceStoreTest {
@@ -51,5 +52,16 @@ class PreferenceStoreTest {
             .putFloat("grade.xs.tone", Float.NEGATIVE_INFINITY).commit()
         assertEquals(GradeSettings("xs", 1f, 1f, 0f), PreferenceStore(context).read().grade)
         assertEquals(GradeSettings("8"), PreferenceStore(context).readGrade("8"))
+        context.getSharedPreferences("moment", Context.MODE_PRIVATE).edit().putString("photoQuality", "unknown").commit()
+        assertEquals(PhotoQuality.STANDARD, PreferenceStore(context).read().photoQuality)
+    }
+
+    @Test fun photoQualityPersistsAndOlderInstallsStartWithStandard() {
+        assertEquals(PhotoQuality.STANDARD, PreferenceStore(context).read().photoQuality)
+        PhotoQuality.entries.forEach { quality ->
+            val store = PreferenceStore(context)
+            store.write(store.read().copy(photoQuality = quality))
+            assertEquals(quality, PreferenceStore(context).read().photoQuality)
+        }
     }
 }

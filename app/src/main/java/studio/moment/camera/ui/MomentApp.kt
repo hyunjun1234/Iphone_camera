@@ -190,9 +190,9 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 
     LaunchedEffect(Unit) { model.messages.collect { snack.showSnackbar(it) } }
     LaunchedEffect(lut, comparing) { engine.setGrade(lut, comparing) }
-    LaunchedEffect(permission, front, mode, sceneSize, imported, retry) {
+    LaunchedEffect(permission, front, mode, sceneSize, imported, retry, prefs.photoQuality) {
         if (permission && imported == null && sceneSize.width > 0 && sceneSize.height > 0) {
-            engine.bind(owner, preview, front, mode, android.util.Rational(sceneSize.width, sceneSize.height))
+            engine.bind(owner, preview, front, mode, android.util.Rational(sceneSize.width, sceneSize.height), prefs.photoQuality)
         } else engine.stop()
     }
     LaunchedEffect(flash, status.ready, status.hasFlash) { engine.setFlash(flash) }
@@ -383,28 +383,31 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                         comparing = comparing, onCompare = { compareLocked = !compareLocked },
                         onComparePress = { comparePressed = it },
                     )
-                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        if (imported == null) {
-                            TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy,
-                                contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                Text(status.activeMode.label, fontSize = 12.sp, maxLines = 1, color = Lime)
-                                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Lime)
+                    // The zoom shortcuts take this row's space without moving the frame or shutter.
+                    if (!(zoomExpanded && imported == null && status.maxZoom > status.minZoom)) {
+                        Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            if (imported == null) {
+                                TextButton(onClick = { sheet = Sheet.MODES }, enabled = permission && !busy,
+                                    contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                    Text(status.activeMode.label, fontSize = 12.sp, maxLines = 1, color = Lime)
+                                    Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = Lime)
+                                }
                             }
-                        }
-                        TextButton(onClick = { stylesExpanded = !stylesExpanded }, enabled = !busy,
-                            modifier = Modifier.testTag("style-toggle").semantics {
-                                contentDescription = "스타일 선택"
-                                stateDescription = if (stylesExpanded) "펼쳐짐" else "접힘"
-                            }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Text("스타일", color = if (stylesExpanded) Lime else Cream, fontSize = 12.sp, maxLines = 1)
-                            Icon(if (stylesExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                                null, Modifier.size(18.dp), tint = if (stylesExpanded) Lime else Cream)
-                        }
-                        TextButton(onClick = { endComparison(); stylesExpanded = false; tuning = true }, enabled = !busy,
-                            contentPadding = PaddingValues(horizontal = 8.dp)) {
-                            Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp), tint = Cream)
-                            Text("  색감 조절", color = Cream, fontSize = 12.sp, maxLines = 1)
+                            TextButton(onClick = { stylesExpanded = !stylesExpanded }, enabled = !busy,
+                                modifier = Modifier.testTag("style-toggle").semantics {
+                                    contentDescription = "스타일 선택"
+                                    stateDescription = if (stylesExpanded) "펼쳐짐" else "접힘"
+                                }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text("스타일", color = if (stylesExpanded) Lime else Cream, fontSize = 12.sp, maxLines = 1)
+                                Icon(if (stylesExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                    null, Modifier.size(18.dp), tint = if (stylesExpanded) Lime else Cream)
+                            }
+                            TextButton(onClick = { endComparison(); stylesExpanded = false; tuning = true }, enabled = !busy,
+                                contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp), tint = Cream)
+                                Text("  색감 조절", color = Cream, fontSize = 12.sp, maxLines = 1)
+                            }
                         }
                     }
                     Row(Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 28.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

@@ -37,6 +37,8 @@ import studio.moment.camera.color.Looks
 import studio.moment.camera.color.evidence
 import studio.moment.camera.BuildConfig
 import studio.moment.camera.data.Preferences
+import studio.moment.camera.data.PhotoQuality
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,6 +123,17 @@ internal fun MomentSheet(
                 }
                 Sheet.SETTINGS -> {
                     SheetTitle("설정", "촬영과 저장 방식을 선택하세요")
+                    Text("사진 화질", color = Cream, fontSize = 14.sp)
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PhotoQuality.entries.forEach { quality ->
+                            Choice(quality.label, quality == preferences.photoQuality, Modifier.weight(1f)) {
+                                onUpdate { it.copy(photoQuality = quality) }
+                            }
+                        }
+                    }
+                    Footnote(preferences.photoQuality.description)
+                    Footnote("실제 저장 크기는 카메라와 촬영 비율, 여유 메모리에 따라 작아질 수 있어요. 작은 사진을 억지로 키우지는 않아요.")
+                    HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 18.dp))
                     SettingSwitch("격자", "구도를 맞추는 안내선을 표시해요", preferences.grid) { value -> onUpdate { it.copy(grid = value) } }
                     SettingSwitch("원본도 저장", "선택한 비율로 원본과 보정한 사진을 한 장씩 저장해요", preferences.saveOriginal) { value -> onUpdate { it.copy(saveOriginal = value) } }
                     SettingSwitch("셀피 좌우 반전", "앞면 카메라 사진을 화면에 보이는 방향으로 저장해요", preferences.mirrorSelfie) { value -> onUpdate { it.copy(mirrorSelfie = value) } }
@@ -140,6 +153,12 @@ internal fun MomentSheet(
                         }
                     }
                     HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 22.dp))
+                    if (camera.ready) {
+                        val maxZoom = String.format(Locale.US, "%.1f", camera.maxZoom).removeSuffix(".0")
+                        Text("현재 카메라에서 최대 ${maxZoom}배", color = Cream, fontSize = 13.sp)
+                        Footnote("휴대폰 기본 카메라의 최대 배율과 다를 수 있어요. 전후면 카메라와 촬영 모드에 따라서도 달라져요.")
+                        Spacer(Modifier.height(16.dp))
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(6.dp).background(Lime, CircleShape))
                         Text("  사진은 기기에서 처리해요", color = Cream, fontSize = 13.sp)
@@ -160,7 +179,7 @@ internal fun MomentSheet(
                     if (look.id == "xs") Footnote("이 리뷰의 시험 기기는 XS Max예요. XS를 직접 시험한 자료와 구분해서 참고해야 해요.")
                     InfoText("사용할 수 있는 촬영 기능", "사진 촬영, 전후면 전환, 줌, 터치 초점, 초점 고정, 노출 조절, 플래시, 타이머를 제공해요. 실제 지원 범위는 현재 카메라에서 확인하며, 지원하지 않는 기능은 사용할 수 없어요.")
                     InfoText("휴대폰 기본 카메라와의 차이", "HDR과 야간 촬영, 인물 사진은 지원되는 기기에서 사용할 수 있어요. 배율을 높여도 반드시 망원 렌즈로 전환되는 것은 아니에요. 동영상, 연속 촬영, 파노라마, 수동 ISO와 셔터 속도, RAW 촬영은 제공하지 않아요.")
-                    InfoText("사진 저장", "편집한 사진은 최대 약 1,600만 화소의 JPG로 저장해요. 큰 사진이나 메모리가 부족한 기기에서는 해상도가 낮아질 수 있어요. 가져온 사진의 비율은 그대로 유지돼요. 투명한 부분에는 흰 배경을 넣어 색감을 적용해요. 원본의 HDR 정보와 RAW 데이터는 JPG에 유지되지 않아요.")
+                    InfoText("사진 저장", "설정에서 사진 화질을 선택할 수 있어요. 용량 절약은 최대 300만, 표준은 최대 1,200만, 높음은 최대 2,400만 화소의 JPG로 저장해요. 실제 크기는 카메라와 촬영 비율, 여유 메모리에 따라 달라져요. 가져온 사진의 비율은 유지하며 원래보다 크게 늘리지 않아요. 투명한 부분에는 흰 배경을 넣어요. HDR 정보와 RAW 데이터는 JPG에 유지되지 않아요.")
                     InfoText("사진과 개인정보", "카메라 권한은 촬영에 사용해요. 가져오기는 직접 선택한 사진에만 접근해요. 앱의 색감 처리는 기기에서 이뤄지며 별도 서버나 분석 서비스로 사진을 전송하지 않아요. 갤러리 앱의 클라우드 동기화와 공유 기능은 해당 서비스 설정을 따라요.")
                     InfoText("사진에 포함된 정보", "편집본에는 촬영 기기와 노출 정보 등이 남을 수 있어요. 편집본에는 위치 정보를 복사하지 않지만, 별도 보관한 원본에는 기존 정보가 유지돼요. 사진은 갤러리에서 삭제할 수 있어요.")
                     Footnote("모먼트는 애플이나 삼성의 공식 앱이 아니에요. 모델 이름은 스타일의 영감을 설명하기 위해 사용해요.")

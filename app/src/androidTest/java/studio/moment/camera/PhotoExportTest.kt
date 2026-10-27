@@ -13,6 +13,7 @@ import studio.moment.camera.color.ColorLut
 import studio.moment.camera.camera.CaptureFrame
 import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.data.PhotoStore
+import studio.moment.camera.data.PhotoQuality
 import studio.moment.camera.data.UserMessageException
 import java.io.File
 import kotlin.math.abs
@@ -123,6 +124,15 @@ class PhotoExportTest {
                     assertEquals(if (orientation < 5) 80 else 120, output.height)
                     assertColorClose(colors[expectedTopLeft[orientation - 1]], output.getPixel(20, 20))
                 } finally { output.recycle() }
+                val exported = store.export(source, ColorLut.identity, GradeSettings(intensity = 0f), false)
+                try {
+                    val upright = context.contentResolver.openInputStream(exported.uri).use { BitmapFactory.decodeStream(it) }!!
+                    try {
+                        assertEquals(if (orientation < 5) 120 else 80, upright.width)
+                        assertEquals(if (orientation < 5) 80 else 120, upright.height)
+                        assertColorClose(colors[expectedTopLeft[orientation - 1]], upright.getPixel(20, 20))
+                    } finally { upright.recycle() }
+                } finally { context.contentResolver.delete(exported.uri, null, null) }
             }
         } finally { bitmap.recycle(); source.delete() }
     }
@@ -162,6 +172,38 @@ class PhotoExportTest {
             output.recycle()
             assertArrayEquals(sourceBytes, source.readBytes())
         } finally { context.contentResolver.delete(result.uri, null, null); source.delete() }
+    }
+
+    @Test fun photoQualityChangesSavedDimensionsAndCompressionWithoutUpscaling() = runBlocking {
+        val source = File.createTempFile("quality-test", ".jpg", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(4500, 3000, Bitmap.Config.ARGB_8888)
+        val row = IntArray(bitmap.width)
+        for (y in 0 until bitmap.height) {
+            for (x in row.indices) row[x] = android.graphics.Color.rgb((x * 7 + y * 3) % 256, (x + y * 5) % 256, (x * 3 + y) % 256)
+            bitmap.setPixels(row, 0, row.size, 0, y, row.size, 1)
+        }
+        source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it) }; bitmap.recycle()
+        val store = PhotoStore(context)
+        val sizes = mutableListOf<Long>()
+        val pixels = mutableListOf<Long>()
+        try {
+            for (quality in PhotoQuality.entries) {
+                val result = store.export(source, ColorLut.identity, GradeSettings(intensity = 0f), false, quality = quality)
+                try {
+                    val data = context.contentResolver.openInputStream(result.uri).use { it!!.readBytes() }
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+                    val count = bounds.outWidth.toLong() * bounds.outHeight
+                    assertTrue(count in 1..quality.maxPixels.toLong())
+                    assertTrue(bounds.outWidth <= 4500 && bounds.outHeight <= 3000)
+                    assertEquals(1.5f, bounds.outWidth.toFloat() / bounds.outHeight, .001f)
+                    sizes += data.size.toLong(); pixels += count
+                } finally { context.contentResolver.delete(result.uri, null, null) }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 28) assertTrue(pixels[0] in 2_900_000..3_000_000)
+            assertTrue(pixels[1] > pixels[0] && pixels[2] >= pixels[1])
+            assertTrue(sizes[0] < sizes[1] && sizes[1] < sizes[2])
+        } finally { source.delete() }
     }
 
     private fun assertColorClose(expected: Int, actual: Int) {

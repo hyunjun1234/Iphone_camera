@@ -30,6 +30,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import studio.moment.camera.color.ColorLut
 import studio.moment.camera.data.UserMessageException
 import studio.moment.camera.data.userMessage
+import studio.moment.camera.data.PhotoQuality
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -120,7 +121,8 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
 
     fun setCaptureFrame(frame: CaptureFrame) { captureFrame = frame }
 
-    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode, viewportRatio: android.util.Rational) {
+    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode, viewportRatio: android.util.Rational,
+                     quality: PhotoQuality = PhotoQuality.STANDARD) {
         val previous = mutableStatus.value
         val version = ++generation
         // Immediately prevent capture on a stale session while initialization is suspended.
@@ -144,27 +146,46 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
             previewRotation = view.display?.rotation ?: Surface.ROTATION_0
             val preview = Preview.Builder().setTargetRotation(previewRotation)
                 .setResolutionSelector(ResolutionSelector.Builder().build()).build().apply { surfaceProvider = view.surfaceProvider }
-            val still = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-                .setResolutionSelector(ResolutionSelector.Builder().setResolutionStrategy(
-                    ResolutionStrategy(android.util.Size(4032, 3024), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
-                ).build()).setJpegQuality(96).setTargetRotation(captureRotation).build()
+            fun makeStill(highResolution: Boolean): ImageCapture {
+                val strategy = when (quality) {
+                    PhotoQuality.SMALL -> ResolutionStrategy(android.util.Size(2048, 1536), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                    PhotoQuality.STANDARD -> ResolutionStrategy(android.util.Size(4032, 3024), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    PhotoQuality.HIGH -> ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY
+                }
+                return ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .setResolutionSelector(ResolutionSelector.Builder().setResolutionStrategy(strategy)
+                        .setAllowedResolutionMode(if (highResolution) ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE
+                            else ResolutionSelector.PREFER_CAPTURE_RATE_OVER_HIGHER_RESOLUTION).build())
+                    .setJpegQuality(quality.jpegQuality).setTargetRotation(captureRotation).build()
+            }
+            var useHighResolution = quality == PhotoQuality.HIGH
+            var still = makeStill(useHighResolution)
             // A failed GPU processor cannot be reused; each new session gets a fresh one.
             val nextProcessor = LutSurfaceProcessor { error -> main.execute {
                 if (version == generation && !closed) mutableStatus.value = mutableStatus.value.copy(ready = false,
                     error = userMessage(error, "미리보기를 표시하지 못했어요. 다시 시도해 주세요."))
             } }.also { it.lut = currentLut; it.compareOriginal = comparing; processor = it }
-            val group = UseCaseGroup.Builder().addUseCase(preview).addUseCase(still)
+            fun group() = UseCaseGroup.Builder().addUseCase(preview).addUseCase(still)
                 .setViewPort(ViewPort.Builder(viewportRatio, previewRotation)
                     .setScaleType(ViewPort.FILL_CENTER).build()).addEffect(nextProcessor.effect).build()
+            fun bindStill(selector: CameraSelector): Camera = try { p.bindToLifecycle(owner, selector, group()) }
+                catch (e: Exception) {
+                    if (!useHighResolution) throw e
+                    // Some devices cannot combine high-resolution stills with this preview or extension.
+                    p.unbindAll()
+                    useHighResolution = false
+                    still = makeStill(false)
+                    p.bindToLifecycle(owner, selector, group())
+                }
             val selector = if (active == CaptureMode.STANDARD) base else extensions!!.getExtensionEnabledCameraSelector(base, active.extension)
-            val bound = try { p.bindToLifecycle(owner, selector, group) }
+            val bound = try { bindStill(selector) }
                 catch (e: Exception) {
                     if (active == CaptureMode.STANDARD) throw e
                     available.remove(active)
                     p.unbindAll()
                     active = CaptureMode.STANDARD
                     onNotice("선택한 모드를 사용할 수 없어 일반 사진 촬영으로 전환했어요.")
-                    p.bindToLifecycle(owner, base, group)
+                    bindStill(base)
                 }
             camera = bound; capture = still; lastOwner = owner; lastView = view
             val info = bound.cameraInfo
