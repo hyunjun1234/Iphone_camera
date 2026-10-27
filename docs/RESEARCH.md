@@ -1,6 +1,6 @@
 # 색감 구현 방식과 카메라 기능의 범위
 
-조사일: 2026-10-26. 아래에서 **공식 카메라 사양**과 **앱의 창작 프리셋 설계**를 구분합니다. 자료의 출처와 보정 수치의 관계는 [색감 근거 문서](COLOR_EVIDENCE.md)에 별도로 정리했습니다. 특정 아이폰이 항상 노랗거나 특정 색을 만든다고 단정할 수는 없습니다. 조명, 화이트밸런스, iOS 버전, 렌즈, 장면 인식과 사용자의 촬영 스타일이 결과에 영향을 줍니다.
+조사일: 2026-10-26. 아이폰 8 자료 추가: 2026-10-27. 아래에서 **공식 카메라 사양**과 **앱의 창작 프리셋 설계**를 구분합니다. 자료의 출처와 보정 수치의 관계는 [색감 근거 문서](COLOR_EVIDENCE.md)에 별도로 정리했습니다. 특정 아이폰이 항상 노랗거나 특정 색을 만든다고 단정할 수는 없습니다. 조명, 화이트밸런스, iOS 버전, 렌즈, 장면 인식과 사용자의 촬영 스타일이 결과에 영향을 줍니다.
 
 ## 1. 무엇이 모델별 차이를 만드는가
 
@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | iPhone 6s | 12MP, f/2.2, Auto HDR, 로컬 톤 매핑 | 따뜻한 흰색, 낮춘 채도, 살짝 떠 있는 검정 |
 | iPhone 7 | f/1.8, 광학식 손떨림 보정, 넓은 색 영역 촬영, HDR | 은은한 골드 톤과 적당한 대비 |
+| iPhone 8 | 12MP 광각, f/1.8, 광학식 손떨림 보정, 사진용 Auto HDR | 따뜻한 색, 은은한 대비, 부드러운 밝은 영역 |
 | iPhone X | 듀얼 카메라, 듀얼 OIS, 사진용 Auto HDR | 조금 더 깊은 그림자와 또렷한 대비 |
 | iPhone XS | Smart HDR, 로컬 톤 매핑 | 부드러운 하이라이트와 따뜻한 중간 톤. 최초 기본값 |
 | iPhone 11 | Night mode, Deep Fusion, 차세대 Smart HDR | 낮은 온기, 열린 그림자, 균형 있는 채도 |
@@ -17,7 +18,7 @@
 | iPhone 15 Pro | Photonic Engine, Smart HDR 5, 48MP 메인 카메라 | 중립적인 온도, 절제된 채도, 부드러운 밝은 영역 |
 | iPhone 16 | 최신 세대 Photographic Styles, Smart HDR 5 | 밝은 중간 톤, 완만한 하이라이트, 미세한 온기 |
 
-모델별 공식 출처: [6s](https://support.apple.com/en-us/111952), [7](https://support.apple.com/en-us/111943), [X](https://support.apple.com/en-us/111864), [XS](https://support.apple.com/en-us/111881), [11](https://support.apple.com/en-us/111865), [13](https://support.apple.com/en-gb/111872), [15 Pro](https://support.apple.com/en-us/111829), [16](https://support.apple.com/en-us/121029).
+모델별 공식 출처: [6s](https://support.apple.com/en-us/111952), [7](https://support.apple.com/en-us/111943), [8](https://support.apple.com/en-us/111976), [X](https://support.apple.com/en-us/111864), [XS](https://support.apple.com/en-us/111881), [11](https://support.apple.com/en-us/111865), [13](https://support.apple.com/en-gb/111872), [15 Pro](https://support.apple.com/en-us/111829), [16](https://support.apple.com/en-us/121029).
 
 Apple의 Photographic Styles는 단순한 화면 전체 필터와 다르게 장면의 일부 색상과 톤을 조절하고 지원 세대별로 기능도 다릅니다. 이번 구현은 그 비공개 알고리즘을 사용하거나 재현한다고 주장하지 않습니다. [Photographic Styles 사용 안내](https://support.apple.com/guide/iphone/use-photographic-styles-iph629d2cd37/ios)
 

@@ -1,6 +1,6 @@
 # 기종별 색감의 출처와 확인 범위
 
-검토일: 2026-10-26
+검토일: 2026-10-27
 
 현재 앱의 색감 수치는 아이폰 사진을 실측해서 얻은 값이 아닙니다. 최초 구현에서는 애플 공식 사양으로 기종별 카메라 기능을 조사한 뒤, 온도와 채도, 대비 등을 직접 정했습니다. 이번 검토에서 DXOMARK의 촬영 리뷰를 추가로 확인했습니다. 이 리뷰가 기존 보정 수치의 출처였던 것처럼 설명하지 않으며, 이번 수정에서도 수치를 검증된 값으로 바꾸었다고 주장하지 않습니다.
 
@@ -18,6 +18,7 @@
 | --- | --- | --- | --- |
 | 6s | [아이폰 6s 사양](https://support.apple.com/en-us/111952) | [DXOMARK 6s](https://www.dxomark.com/apple-iphone-6s-review-solid-and-compelling-performance/) | 과거 시험 프로토콜의 리뷰입니다. 기사에 색상 음영 시험 정정 안내가 있어 단일 수치를 보정값으로 사용할 수 없습니다. |
 | 7 | [아이폰 7 사양](https://support.apple.com/en-us/111943) | [DXOMARK 7](https://www.dxomark.com/apple-iphone-7-camera-review-better-than-ever/) | 리뷰의 평가와 앱의 금빛 색감 설정은 별개입니다. |
+| 8 | [아이폰 8 사양](https://support.apple.com/en-us/111976) | [DXOMARK 8](https://www.dxomark.com/apple-iphone-8-reviewed-a-solid-performance-upgrade-over-the-iphone-7/) | 리뷰는 밝은 환경의 색 정확도 등을 평가하며 일부 상세 비교는 8 Plus 리뷰를 참조합니다. 앱의 따뜻한 색과 대비 수치는 직접 정했으며, 실제 기기로 검증한 값은 아닙니다. |
 | X | [아이폰 X 사양](https://support.apple.com/en-us/111864) | [DXOMARK X](https://www.dxomark.com/apple-iphone-x-top-performer-stills/) | 과거 프로토콜과 갱신 이력을 확인해야 하며 세대 간 점수를 색감 차이로 환산할 수 없습니다. |
 | XS | [아이폰 XS 사양](https://support.apple.com/en-us/111881) | [DXOMARK XS Max](https://www.dxomark.com/apple-iphone-xs-max-review-flagship-imaging-power/) | 시험 모델은 XS Max입니다. XS 실측 자료나 전면 카메라 리뷰로 취급하지 않습니다. |
 | 11 | [아이폰 11 사양](https://support.apple.com/en-us/111865) | [DXOMARK 11](https://www.dxomark.com/apple-iphone-11-camera-review/) | 장면별 평가는 참고할 수 있지만 갤럭시와 같은 장면을 찍어 정합한 보정 데이터가 아닙니다. |
