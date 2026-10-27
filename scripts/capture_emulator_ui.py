@@ -26,8 +26,16 @@ def main():
         return subprocess.check_output([executable, '-s', args.serial, *arguments], timeout=45)
 
     def nodes():
-        adb('shell', 'uiautomator', 'dump', '/sdcard/moment-ui.xml')
-        return list(ET.fromstring(adb('shell', 'cat', '/sdcard/moment-ui.xml')).iter('node'))
+        # Immediately after instrumentation or launch, accessibility may have no root yet.
+        # Remove the previous dump so a failed attempt cannot tap stale coordinates.
+        for _ in range(6):
+            adb('shell', 'rm', '-f', '/sdcard/moment-ui.xml')
+            try:
+                adb('shell', 'uiautomator', 'dump', '/sdcard/moment-ui.xml')
+                return list(ET.fromstring(adb('shell', 'cat', '/sdcard/moment-ui.xml')).iter('node'))
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ET.ParseError):
+                time.sleep(2)
+        raise RuntimeError('Emulator accessibility tree did not become available')
 
     def find(label, attribute='content-desc', partial=False):
         for node in nodes():
