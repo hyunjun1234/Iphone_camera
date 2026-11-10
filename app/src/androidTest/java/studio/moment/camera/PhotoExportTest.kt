@@ -206,6 +206,23 @@ class PhotoExportTest {
         } finally { source.delete() }
     }
 
+    @Test fun standardQualityKeepsEveryPixelOfA12MegapixelCameraPhoto() = runBlocking {
+        // 4032x3024 is what the camera is asked for at standard quality; shrinking it would resample every photo.
+        val source = File.createTempFile("standard-12mp", ".jpg", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(4032, 3024, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF6080A0.toInt()) }
+        source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }; bitmap.recycle()
+        try {
+            val result = PhotoStore(context).export(source, ColorLut.identity, GradeSettings(intensity = 0f), false,
+                CaptureFrame(0f, 0f, 1f, 1f, 4f / 3f), PhotoQuality.STANDARD)
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(result.uri).use { BitmapFactory.decodeStream(it, null, bounds) }
+                assertEquals(4032, bounds.outWidth)
+                assertEquals(3024, bounds.outHeight)
+            } finally { context.contentResolver.delete(result.uri, null, null) }
+        } finally { source.delete() }
+    }
+
     private fun assertColorClose(expected: Int, actual: Int) {
         for (shift in listOf(0, 8, 16)) assertTrue("JPEG color mismatch: $expected / $actual", abs(((expected ushr shift) and 255) - ((actual ushr shift) and 255)) <= 8)
     }
