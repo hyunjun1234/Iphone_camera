@@ -35,7 +35,35 @@ data class CaptureFrame(val left: Float, val top: Float, val right: Float, val b
         }
         return PixelFrame(x + (endX - x - cropWidth) / 2, y + (endY - y - cropHeight) / 2, cropWidth, cropHeight)
     }
+
+    /** Where the whole camera image sits on screen when this frame is shown at the given bounds. */
+    fun sceneAround(frameLeft: Float, frameTop: Float, frameWidth: Float, frameHeight: Float): SceneBounds {
+        val width = frameWidth / (right - left)
+        val height = frameHeight / (bottom - top)
+        return SceneBounds(frameLeft - left * width, frameTop - top * height, width, height)
+    }
+
+    /** A touch inside the displayed frame, as a position in the view that shows the whole camera image. */
+    fun scenePoint(x: Float, y: Float, frameWidth: Float, frameHeight: Float): Pair<Float, Float> =
+        sceneAround(0f, 0f, frameWidth, frameHeight).let { x - it.left to y - it.top }
+
+    companion object {
+        /** The largest centred frame of [frameRatio] in a camera image of [sceneRatio]; both are width / height. */
+        fun centered(frameRatio: Float, sceneRatio: Float): CaptureFrame {
+            val width = minOf(1f, frameRatio / sceneRatio)
+            val height = minOf(1f, sceneRatio / frameRatio)
+            return CaptureFrame((1f - width) / 2f, (1f - height) / 2f, (1f + width) / 2f, (1f + height) / 2f, frameRatio)
+        }
+    }
 }
+
+data class SceneBounds(val left: Float, val top: Float, val width: Float, val height: Float)
+
+/**
+ * Width to height of the camera image as seen on screen. CameraX streams default to 4:3, the whole
+ * sensor on nearly every phone; [sensorRotationDegrees] tells whether the screen shows it turned upright.
+ */
+fun cameraImageShape(sensorRotationDegrees: Int): Pair<Int, Int> = if (sensorRotationDegrees % 180 == 0) 4 to 3 else 3 to 4
 
 data class PixelFrame(val left: Int, val top: Int, val width: Int, val height: Int)
 data class CapturedPhoto(val file: File, val frame: CaptureFrame)

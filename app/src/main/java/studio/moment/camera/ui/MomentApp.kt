@@ -48,16 +48,14 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -69,9 +67,10 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -89,6 +88,7 @@ import studio.moment.camera.camera.FrameRatio
 import studio.moment.camera.camera.FocusState
 import studio.moment.camera.color.Looks
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 internal enum class Sheet { LOOKS, SETTINGS, MODES, ABOUT }
 
@@ -125,12 +125,11 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     var mode by rememberSaveable { mutableStateOf(CaptureMode.AUTO) }
     var flash by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var retry by remember { mutableIntStateOf(0) }
-    var sceneSize by remember { mutableStateOf(IntSize.Zero) }
     var sceneOrigin by remember { mutableStateOf(Offset.Zero) }
     var displayedFrame by remember { mutableStateOf(Rect.Zero) }
-    // Keep the normal composition when the adjustment panel temporarily shrinks its preview.
-    var frameEdges by rememberSaveable { mutableStateOf(listOf(0f, 0f, 1f, 1f)) }
-    val captureFrame = CaptureFrame(frameEdges[0], frameEdges[1], frameEdges[2], frameEdges[3], prefs.ratio.value)
+    val frameMeasured = displayedFrame.width > 0f && displayedFrame.height > 0f
+    // 1x is the camera's own view: each ratio takes the largest area the camera image has for it.
+    val captureFrame = CaptureFrame.centered(prefs.ratio.value, status.sceneRatio)
     SideEffect { engine.setCaptureFrame(captureFrame) }
     var compareLocked by remember { mutableStateOf(false) }
     var comparePressed by remember { mutableStateOf(false) }
@@ -190,10 +189,9 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
 
     LaunchedEffect(Unit) { model.messages.collect { snack.showSnackbar(it) } }
     LaunchedEffect(lut, comparing) { engine.setGrade(lut, comparing) }
-    LaunchedEffect(permission, front, mode, sceneSize, imported, retry, prefs.photoQuality) {
-        if (permission && imported == null && sceneSize.width > 0 && sceneSize.height > 0) {
-            engine.bind(owner, preview, front, mode, android.util.Rational(sceneSize.width, sceneSize.height), prefs.photoQuality)
-        } else engine.stop()
+    LaunchedEffect(permission, front, mode, frameMeasured, imported, retry, prefs.photoQuality) {
+        if (permission && imported == null && frameMeasured) engine.bind(owner, preview, front, mode, prefs.photoQuality)
+        else engine.stop()
     }
     LaunchedEffect(flash, status.ready, status.hasFlash) { engine.setFlash(flash) }
     LaunchedEffect(tuning, front, mode, imported, status.ready) { zoomExpanded = false }
@@ -225,19 +223,14 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     }
 
     Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().onSizeChanged { sceneSize = it }
-            .onGloballyPositioned { sceneOrigin = it.boundsInRoot().topLeft }) {
+        Box(Modifier.fillMaxSize().onGloballyPositioned { sceneOrigin = it.positionInRoot() }) {
             if (permission && imported == null) {
-                val normal = Rect(captureFrame.left * sceneSize.width, captureFrame.top * sceneSize.height,
-                    captureFrame.right * sceneSize.width, captureFrame.bottom * sceneSize.height)
-                val scale = if (tuning && normal.width > 0 && displayedFrame.width > 0) displayedFrame.width / normal.width else 1f
-                AndroidView(factory = { preview }, modifier = Modifier.fillMaxSize().testTag("camera-scene")
-                    .graphicsLayer {
-                        transformOrigin = TransformOrigin(0f, 0f)
-                        scaleX = scale; scaleY = scale
-                        translationX = if (tuning) displayedFrame.left - normal.left * scale else 0f
-                        translationY = if (tuning) displayedFrame.top - normal.top * scale else 0f
-                    })
+                // The whole camera image is laid out so the frame shows exactly the area that is saved.
+                val scene = captureFrame.sceneAround(displayedFrame.left, displayedFrame.top, displayedFrame.width, displayedFrame.height)
+                AndroidView(factory = { preview }, modifier = Modifier.layout { measurable, constraints ->
+                    val placeable = measurable.measure(Constraints.fixed(scene.width.roundToInt(), scene.height.roundToInt()))
+                    layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(scene.left.roundToInt(), scene.top.roundToInt()) }
+                }.testTag("camera-scene"))
                 CameraSurround(displayedFrame, if (tuning) 1f else .40f)
             }
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
@@ -274,12 +267,8 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                     val frameWidth = minOf(maxWidth, maxHeight * frameRatio)
                     Box(Modifier.width(frameWidth).aspectRatio(frameRatio).testTag("photo-preview")
                         .onGloballyPositioned { coordinates ->
-                            val bounds = coordinates.boundsInRoot().translate(-sceneOrigin)
-                            displayedFrame = bounds
-                            if (!tuning && imported == null && sceneSize.width > 0 && sceneSize.height > 0 && bounds.width > 0 && bounds.height > 0) {
-                                frameEdges = listOf(bounds.left / sceneSize.width, bounds.top / sceneSize.height,
-                                    bounds.right / sceneSize.width, bounds.bottom / sceneSize.height).map { it.coerceIn(0f, 1f) }
-                            }
+                            // Unclipped: a frame scrolled partly off a short window keeps the camera image's scale.
+                            displayedFrame = Rect(coordinates.positionInRoot() - sceneOrigin, coordinates.size.toSize())
                         }.clip(RoundedCornerShape(0.dp))
                         .background(if (permission && imported == null) Color.Transparent else Panel)) {
                         when {
@@ -289,11 +278,11 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                             }
                             permission -> {
                                 Box(Modifier.fillMaxSize()
-                                    .pointerInput(status.ready, busy, captureFrame, sceneSize) {
+                                    .pointerInput(status.ready, busy, captureFrame) {
                                         fun focusAt(point: Offset, lock: Boolean = false) {
                                             if (!status.ready || busy) return
-                                            val x = (captureFrame.left + point.x / size.width * (captureFrame.right - captureFrame.left)) * sceneSize.width
-                                            val y = (captureFrame.top + point.y / size.height * (captureFrame.bottom - captureFrame.top)) * sceneSize.height
+                                            // The preview view holds the whole camera image; the frame may start part-way into it.
+                                            val (x, y) = captureFrame.scenePoint(point.x, point.y, size.width.toFloat(), size.height.toFloat())
                                             engine.focus(preview, x, y, lock)
                                             focus = point
                                         }
@@ -452,7 +441,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     }
 }
 
-/** One camera surface continues under the controls; only the selected frame is saved. */
+/** Dims whatever the camera image shows beyond the selected frame; only the frame is saved. */
 @Composable
 private fun CameraSurround(frame: Rect, opacity: Float) {
     Canvas(Modifier.fillMaxSize()) {

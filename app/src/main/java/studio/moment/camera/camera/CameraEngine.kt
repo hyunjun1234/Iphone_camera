@@ -65,6 +65,8 @@ data class CameraStatus(
     val availableModes: Set<CaptureMode> = setOf(CaptureMode.STANDARD),
     val activeMode: CaptureMode = CaptureMode.STANDARD,
     val error: String? = null,
+    /** Width / height of the whole camera image as the screen shows it. */
+    val sceneRatio: Float = 3f / 4f,
 )
 
 class CameraEngine(private val context: Context, private val onNotice: (String) -> Unit) : AutoCloseable {
@@ -121,7 +123,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
 
     fun setCaptureFrame(frame: CaptureFrame) { captureFrame = frame }
 
-    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode, viewportRatio: android.util.Rational,
+    suspend fun bind(owner: LifecycleOwner, view: PreviewView, front: Boolean, mode: CaptureMode,
                      quality: PhotoQuality = PhotoQuality.STANDARD) {
         val previous = mutableStatus.value
         val version = ++generation
@@ -144,6 +146,10 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
                 runCatching { extensions?.isExtensionAvailable(base, it.extension) == true }.getOrDefault(false) }.toMutableSet()
             var active = mode.takeIf { it in available } ?: CaptureMode.STANDARD
             previewRotation = view.display?.rotation ?: Surface.ROTATION_0
+            // The viewport is the whole camera image, not the screen: a screen-shaped viewport crops the
+            // sensor, so 1x showed a narrower view than the phone's own camera.
+            val (sceneWidth, sceneHeight) = cameraImageShape(runCatching { p.getCameraInfo(base) }.getOrNull()
+                ?.getSensorRotationDegrees(previewRotation) ?: 90)
             val preview = Preview.Builder().setTargetRotation(previewRotation)
                 .setResolutionSelector(ResolutionSelector.Builder().build()).build().apply { surfaceProvider = view.surfaceProvider }
             fun makeStill(highResolution: Boolean): ImageCapture {
@@ -166,7 +172,7 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
                     error = userMessage(error, "미리보기를 표시하지 못했어요. 다시 시도해 주세요."))
             } }.also { it.lut = currentLut; it.compareOriginal = comparing; processor = it }
             fun group() = UseCaseGroup.Builder().addUseCase(preview).addUseCase(still)
-                .setViewPort(ViewPort.Builder(viewportRatio, previewRotation)
+                .setViewPort(ViewPort.Builder(android.util.Rational(sceneWidth, sceneHeight), previewRotation)
                     .setScaleType(ViewPort.FILL_CENTER).build()).addEffect(nextProcessor.effect).build()
             fun bindStill(selector: CameraSelector): Camera = try { p.bindToLifecycle(owner, selector, group()) }
                 catch (e: Exception) {
@@ -194,7 +200,8 @@ class CameraEngine(private val context: Context, private val onNotice: (String) 
             mutableStatus.value = CameraStatus(hasFront = hasFront, hasBack = hasBack, frontFacing = actualFront,
                 hasFlash = info.hasFlashUnit(), minZoom = info.zoomState.value?.minZoomRatio ?: 1f,
                 maxZoom = info.zoomState.value?.maxZoomRatio ?: 1f, availableModes = available, activeMode = active,
-                minEv = exposure.exposureCompensationRange.lower * step, maxEv = exposure.exposureCompensationRange.upper * step)
+                minEv = exposure.exposureCompensationRange.lower * step, maxEv = exposure.exposureCompensationRange.upper * step,
+                sceneRatio = sceneWidth.toFloat() / sceneHeight)
             info.zoomState.observe(owner) { zoom -> if (version == generation) {
                 mutableStatus.value = mutableStatus.value.copy(zoom = zoom.zoomRatio, minZoom = zoom.minZoomRatio, maxZoom = zoom.maxZoomRatio)
             } }
