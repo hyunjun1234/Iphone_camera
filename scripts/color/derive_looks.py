@@ -15,15 +15,16 @@ Three charts do not show the main camera in normal light and are replaced:
   iPhone 15 Pro  tone and saturation from the mean of 13 and 16, typical white balance (ultra wide lens, dim light)
 
 Two choices are not measurements and can be changed on the command line:
-  --shared 0.5   share of the brightness difference that all iPhones have in common against Galaxy. Charts say
-                 iPhones are brighter, users say Galaxy is, so half of it is used. Differences between iPhone
-                 models are kept in full.
+  --shared 0.5   share of the brightness difference that all iPhones have in common against Galaxy. The seven
+                 Galaxy charts differ from each other by up to 0.7 EV at mid grey, so how much brighter an iPhone
+                 is depends on the Galaxy; half of it is used. Differences between iPhone models are kept in full.
   --target 12.5  strength. A style that changes the chart little is scaled up and a strong one down:
                  gain = sqrt(target / change), limited to 0.85 .. 1.6. change is the mean CIE76 colour difference
                  the unscaled style makes on the Galaxy chart. --target 0 switches the scaling off.
 
 Run:  python3 scripts/color/derive_looks.py            (needs numpy and scipy)
-Output: a table and the value lines for Look.kt on the terminal. --json FILE also writes the values to FILE.
+Output: a table and the value lines for Look.kt on the terminal. --json FILE also writes the values to FILE,
+--markdown adds the table used in docs/COLOR_EVIDENCE.md (differences before the gain, then the applied values).
 """
 import json
 import sys
@@ -188,20 +189,26 @@ def main():
     print(f'typical iPhone grey balance against it: R/G {charts.typical_wb[0]:+.1f} B/G {charts.typical_wb[1]:+.1f} points')
     print(f'{"style":6s} {"gain":>5s}  {"R/G":>6s} {"B/G":>6s}  {"satur.":>6s}  {"mid grey":>8s}  {"change":>6s}  '
           + ' '.join(f'{n[:9]:>9s}' for n in NAMES))
-    result = {}
+    result, table = {}, []
     for key in IPHONES:
         values, info = charts.derive(key, shared)
-        gain = 1.0
+        gain, measured = 1.0, info
         if target > 0:
             gain = float(np.clip(np.sqrt(target / info['change']), 0.85, 1.6))
             values, info = charts.derive(key, shared, gain)
         result[key] = {n: round(float(v), 3) for n, v in zip(NAMES, values)}
+        table.append(f'| {key} | {measured["wb"][0]:+.1f} | {measured["wb"][1]:+.1f} | {measured["saturation"]:.2f} | {gain:.2f} | '
+                     + ' | '.join(f'{result[key][n]:.3f}' for n in NAMES) + f' | {info["mid"]:.2f} |')
         print(f'{key:6s} {gain:5.2f}  {info["wb"][0]:+6.1f} {info["wb"][1]:+6.1f}  {info["saturation"]:6.3f}  '
               f'{.5:.2f}>{info["mid"]:.3f}  {info["change"]:6.2f}  ' + ' '.join(f'{result[key][n]:9.3f}' for n in NAMES))
     print('\nLook.kt values (warmth, tint, saturation, contrast, fade, highlight, gamma):')
     for key in IPHONES:
         print(f'  {key:6s} ' + ', '.join(f'{result[key][n]:.3f}f'.replace('0.', '.', 1) if abs(result[key][n]) < 1
                                          else f'{result[key][n]:.3f}f' for n in NAMES))
+    if '--markdown' in sys.argv:      # the table in docs/COLOR_EVIDENCE.md
+        print('\n| style | R/G | B/G | saturation ratio | gain | ' + ' | '.join(NAMES) + ' | mid grey |')
+        print('|' + ' --- |' * (len(NAMES) + 6))
+        print('\n'.join(table))
     if '--json' in sys.argv:
         Path(option('--json', '')).write_text(json.dumps(result, indent=1) + '\n')
 
