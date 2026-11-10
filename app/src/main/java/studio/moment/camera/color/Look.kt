@@ -5,7 +5,11 @@ import kotlin.math.floor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/** Creative interpretations, not measured Apple camera profiles. All values operate in SDR sRGB. */
+/**
+ * The change that turns an average Galaxy photo of a colour chart into each iPhone's, in SDR sRGB.
+ * The numbers come from scripts/color/derive_looks.py (chart photos, not Apple data); docs/COLOR_EVIDENCE.md
+ * says what is measured and what is a choice.
+ */
 data class Look(
     val id: String,
     val model: String,
@@ -24,15 +28,15 @@ data class Look(
 
 object Looks {
     val all = listOf(
-        Look("6s", "6s", "2015", "부드러운 크림색", "노란 기를 더하고 채도와 대비를 낮춘 스타일이에요.", 0xFFE2C6A4, .045f, .008f, .86f, .94f, .035f, .08f, .98f),
-        Look("7", "7", "2016", "은은한 금빛", "따뜻한 색에 적당한 대비를 더한 스타일이에요.", 0xFFD9BD7F, .032f, -.004f, .94f, 1.04f, .018f, .06f),
-        Look("8", "8", "2017", "따뜻하고 또렷한 색", "따뜻한 색에 은은한 대비를 더하고 밝은 부분을 부드럽게 표현해요.", 0xFFD4BEA8, .026f, .006f, .98f, 1.035f, .012f, .085f, .99f),
-        Look("x", "X", "2017", "또렷한 명암", "그림자를 깊게 표현하고 색을 선명하게 살려요.", 0xFFC0B4A0, .014f, .006f, .97f, 1.10f, .008f, .065f),
-        Look("xs", "XS", "2018", "따뜻하고 부드러운 색", "노란 기를 살짝 더하고 밝은 부분을 부드럽게 표현해요.", 0xFFD9CFAD, .038f, .004f, .91f, .98f, .022f, .11f, .97f),
-        Look("11", "11", "2019", "자연스러운 색", "채도를 크게 바꾸지 않고 어두운 부분을 살짝 밝게 해요.", 0xFFB7C5AD, .014f, -.004f, .98f, 1.02f, .014f, .08f, .97f),
-        Look("13", "13", "2021", "선명한 색", "채도와 대비를 높이고 색온도를 조금 낮춘 스타일이에요.", 0xFFAFC3CC, -.006f, .002f, 1.06f, 1.09f, .004f, .09f),
-        Look("15pro", "15 Pro", "2023", "차분한 색", "채도를 살짝 낮추고 밝은 부분의 대비를 줄여요.", 0xFFC4BCAF, .003f, .001f, .97f, 1.055f, .008f, .105f),
-        Look("16", "16", "2024", "밝고 부드러운 색", "중간 밝기를 올리고 밝은 부분을 부드럽게 표현해요.", 0xFFC6C7B5, .008f, .003f, 1.025f, 1.035f, .009f, .12f, .97f),
+        Look("6s", "6s", "2015", "어둡고 따뜻한 색", "중간 밝기와 채도를 낮추고 노란 기를 더해요. 검은색은 살짝 들떠 보여요.", 0xFFE2C6A4, .033f, -.013f, .842f, .962f, .050f, -.020f, 1.322f),
+        Look("7", "7", "2016", "깊은 명암", "어두운 곳은 더 어둡게, 밝은 곳은 더 밝게 하고 색은 조금 덜어내요.", 0xFFD9BD7F, .011f, -.010f, .691f, 1.266f, .022f, -.020f, 1.122f),
+        Look("8", "8", "2017", "밝고 진한 색", "중간 밝기와 대비를 올리고 색을 진하게 해요.", 0xFFD4BEA8, .012f, -.010f, 1.154f, 1.205f, .000f, -.020f, .894f),
+        Look("x", "X", "2017", "밝고 또렷한 명암", "중간 밝기와 대비를 올리고 노란 기를 조금 더해요.", 0xFFC0B4A0, .020f, -.013f, 1.008f, 1.250f, .000f, -.020f, .876f),
+        Look("xs", "XS", "2018", "따뜻하고 화사한 색", "노란 기를 가장 많이 더하고 밝기와 채도를 올려요.", 0xFFD9CFAD, .044f, -.017f, 1.245f, 1.216f, .020f, .040f, .905f),
+        Look("11", "11", "2019", "밝고 부드러운 명암", "어두운 곳과 중간 밝기를 크게 올려 부드럽게 표현해요.", 0xFFB7C5AD, .005f, -.013f, 1.351f, 1.031f, .000f, .040f, .790f),
+        Look("13", "13", "2021", "가장 진한 색", "채도를 가장 많이 올리고 밝기와 대비도 높여요.", 0xFFCFD29A, .008f, -.015f, 1.366f, 1.305f, .000f, .005f, .844f),
+        Look("15pro", "15 Pro", "2023", "밝고 선명한 색", "밝기와 대비를 올리고 색을 진하게 해요. 색 치우침은 가장 적어요.", 0xFFC4BCAF, .009f, -.008f, 1.342f, 1.310f, .011f, .016f, .814f),
+        Look("16", "16", "2024", "가장 밝은 색", "중간 밝기를 가장 많이 올리고 검은색을 살짝 띄워요.", 0xFFC6C7B5, .011f, -.011f, 1.315f, 1.350f, .050f, .031f, .802f),
     )
     val default = all.first { it.id == "xs" }
     fun find(id: String) = all.find { it.id == id } ?: default
@@ -105,8 +109,7 @@ class ColorLut private constructor(val size: Int, val colors: IntArray) {
                 fun grade(c: Float, wb: Float): Int {
                     var value = luma + (c - luma) * saturation
                     value = (value + wb * (1f - abs(value - .5f))).coerceIn(0f, 1f)
-                    value = value.pow(look.gamma)
-                    value = ((value - .5f) * contrast + .5f).coerceIn(0f, 1f)
+                    value = curve(value.pow(look.gamma), contrast)
                     value += look.fade * (1f - value) * (1f - value)
                     value -= look.highlight * value.pow(4)
                     return (mix(c, value.coerceIn(0f, 1f), strength) * 255).roundToInt().coerceIn(0, 255)
@@ -118,6 +121,10 @@ class ColorLut private constructor(val size: Int, val colors: IntArray) {
             }
             return ColorLut(SIZE, colors)
         }
+
+        /** Contrast that keeps black and white in place: slope [contrast] at mid grey, a soft toe and shoulder. */
+        private fun curve(value: Float, contrast: Float) =
+            if (value < .5f) .5f * (2f * value).pow(contrast) else 1f - .5f * (2f * (1f - value)).pow(contrast)
 
         private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
     }

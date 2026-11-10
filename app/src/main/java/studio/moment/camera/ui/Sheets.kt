@@ -169,11 +169,14 @@ internal fun MomentSheet(
                 }
                 Sheet.ABOUT -> {
                     SheetTitle("앱 정보", "스타일 제작 방식과 촬영 기능을 확인하세요")
-                    InfoText("스타일 제작 방식", "현재 스타일은 온도와 채도, 명암을 직접 조정해 만들었어요. 실제 아이폰 사진을 측정해 만든 값은 아니에요.")
-                    InfoText("참고 자료의 범위", "애플 공식 문서는 카메라 사양을 확인하는 데 사용했어요. 촬영 리뷰에서는 조명에 따른 색과 화이트밸런스를 참고할 수 있지만, 이 자료가 앱의 보정 수치를 검증해 주는 것은 아니에요.")
+                    InfoText("스타일 제작 방식", "스타일 값은 같은 색상 차트를 찍은 아이폰 9종과 갤럭시 7종의 사진을 비교해 구했어요. 갤럭시 사진을 각 아이폰의 색 쪽으로 옮기는 온도와 채도, 밝기, 대비를 계산한 값이에요. 차이가 눈에 띄도록 세기는 따로 맞췄어요.")
+                    InfoText("참고 자료의 범위", "애플이 공개한 값이 아니고 기종마다 차트 사진 한 장을 측정한 값이어서, 실제 아이폰 사진과 똑같아지지는 않아요. 촬영 리뷰는 색의 방향을 확인하는 데 참고했어요.")
                     val look = Looks.find(preferences.grade.lookId)
                     val evidence = look.evidence()
                     Text("현재 선택한 아이폰 ${look.model} 스타일의 참고 자료", color = Cream, fontSize = 13.sp, modifier = Modifier.padding(top = 16.dp))
+                    evidence.chart?.let { SourceButton("색상 차트를 측정한 노트북체크 리뷰", it) }
+                    if (look.id == "8") Footnote("아이폰 8의 차트는 어두운 곳에서 찍혀, 밝기와 대비는 같은 세대인 X의 차트에서 가져왔어요.")
+                    if (look.id == "15pro") Footnote("15 Pro의 공개 차트는 초광각 렌즈로 어두운 곳에서 찍혀 쓰지 않았어요. 13과 16의 값을 평균했어요.")
                     SourceButton("애플 공식 카메라 사양", evidence.specification)
                     SourceButton("디엑스오마크 ${evidence.reviewModel} 촬영 리뷰", evidence.review)
                     if (look.id == "xs") Footnote("이 리뷰의 시험 기기는 XS Max예요. XS를 직접 시험한 자료와 구분해서 참고해야 해요.")
