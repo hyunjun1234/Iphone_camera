@@ -43,6 +43,8 @@
 
 단위 테스트 32개, Android 통합 테스트 23개, 360×720dp와 글자 크기 130%에서 촬영과 사용성 테스트 12개를 통과했습니다(2026-11-11, API 35 ARM64 에뮬레이터). 0.2.8보다 단위 테스트 11개(저장 대기열 6개, 색 5개)와 통합 테스트 1개가 늘었습니다. 린트 오류는 0개이며 기존 경고 22개가 남아 있습니다.
 
+GitHub Actions의 x86_64 에뮬레이터 검사는 0.2.9에서도 실패로 끝납니다([실행 42863004438](https://github.com/hyunjun1234/Iphone_camera/actions/runs/42863004438), 2026-11-11, 커밋 d64fa51). 23개 중 21개가 통과했고, 실패한 2개는 0.2.7과 0.2.8에서도 실패하던 사용성 테스트입니다. `photoQualityCanBeChangedWithoutLosingTheCameraAndSurvivesRestart`는 화질을 바꾼 뒤 카메라 준비를 30초 기다리는 줄(`CameraUsabilityTest.kt:185`)에서, `zoomControlsStayOutsidePhotoAndCollapseOnlyAfterInteractionEnds`는 줌 조절이 접히기를 6초 기다리는 줄(`CameraUsabilityTest.kt:166`)에서 멈췄습니다. 0.2.8 때와 같은 지점이고 줄 번호만 3줄 밀렸습니다. 이번에 추가한 통합 테스트는 통과했습니다. 두 실패의 원인은 아직 확정하지 못했습니다.
+
 갤럭시 실기기에서 찍은 사진에 적용한 결과와, CameraX로 받은 사진의 색이 삼성 기본 카메라 앱과 같은지는 미확인입니다.
 
 ## 버전 0.2.8 기본 카메라와 같은 1배 화각
