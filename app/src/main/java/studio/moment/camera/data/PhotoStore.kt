@@ -16,6 +16,8 @@ import android.os.StatFs
 import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import studio.moment.camera.color.ColorLut
 import studio.moment.camera.color.GradeSettings
@@ -30,11 +32,18 @@ import java.util.UUID
 import kotlin.coroutines.coroutineContext
 import kotlin.math.sqrt
 
-data class SavedPhoto(val uri: Uri, val original: Uri?, val model: String)
+/** [unprocessed] marks a capture that was saved as it came from the camera because colour processing kept failing. */
+data class SavedPhoto(val uri: Uri, val original: Uri?, val model: String, val unprocessed: Boolean = false)
 
 class PhotoStore(private val context: Context) {
     private val resolver = context.contentResolver
     private val folder get() = File(context.cacheDir, "photos").apply { mkdirs() }
+
+    /** Last resort for a capture that could not be processed: the camera's own file, without crop or colour. */
+    suspend fun publishUnprocessed(source: File): SavedPhoto = withContext(Dispatchers.IO) {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + "_" + UUID.randomUUID().toString().take(8)
+        SavedPhoto(publish(source, "MOMENT_${stamp}_unprocessed.jpg", "image/jpeg", "Pictures/moment"), null, "", unprocessed = true)
+    }
 
     suspend fun copyImport(uri: Uri): File = withContext(Dispatchers.IO) {
         val file = File.createTempFile("import-", ".image", folder)
@@ -58,8 +67,13 @@ class PhotoStore(private val context: Context) {
         } catch (e: Exception) { file.delete(); throw e }
     }
 
+    /** One export at a time in the whole app: each holds a full-size bitmap, and camera saves now run beside the editor. */
     suspend fun export(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean,
-                       frame: CaptureFrame? = null, quality: PhotoQuality = PhotoQuality.STANDARD): SavedPhoto = withContext(Dispatchers.IO) {
+                       frame: CaptureFrame? = null, quality: PhotoQuality = PhotoQuality.STANDARD): SavedPhoto =
+        exporting.withLock { exportNow(source, lut, settings, saveOriginal, frame, quality) }
+
+    private suspend fun exportNow(source: File, lut: ColorLut, settings: GradeSettings, saveOriginal: Boolean,
+                                  frame: CaptureFrame?, quality: PhotoQuality): SavedPhoto = withContext(Dispatchers.IO) {
         val bitmap = decodeExport(source, frame, quality)
         var output: File? = null
         var framedOriginal: File? = null
@@ -271,5 +285,8 @@ class PhotoStore(private val context: Context) {
         } catch (e: Exception) { output.delete(); throw e }
     }
 
-    companion object { private const val TimeUnitDays = 24L * 60 * 60 * 1000 }
+    companion object {
+        private const val TimeUnitDays = 24L * 60 * 60 * 1000
+        private val exporting = Mutex()
+    }
 }

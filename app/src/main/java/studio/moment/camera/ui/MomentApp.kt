@@ -105,6 +105,7 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
     val stage by model.stage.collectAsStateWithLifecycle()
     val countdown by model.countdown.collectAsStateWithLifecycle()
     val latest by model.latest.collectAsStateWithLifecycle()
+    val pendingSaves by model.pendingSaves.collectAsStateWithLifecycle()
     val imported by model.imported.collectAsStateWithLifecycle()
     val importedPreview by model.importPreview.collectAsStateWithLifecycle()
     val importedOriginal by model.importOriginal.collectAsStateWithLifecycle()
@@ -412,9 +413,17 @@ fun MomentApp(model: MomentViewModel) = MomentTheme {
                                 } catch (_: Exception) {
                                     model.notice("사진을 열지 못했어요. 갤러리에서 사진이 삭제되지 않았는지 확인해 주세요.")
                                 }
-                            }).semantics { contentDescription = if (latest != null) "최근 사진" else "사진 가져오기" }, contentAlignment = Alignment.Center) {
+                            }).semantics {
+                                contentDescription = if (latest != null) "최근 사진" else "사진 가져오기"
+                                if (pendingSaves > 0) stateDescription = "사진 ${pendingSaves}장 저장 중"
+                            }, contentAlignment = Alignment.Center) {
                             if (latestBitmap != null) Image(latestBitmap!!.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             else Icon(Icons.Outlined.PhotoLibrary, null, tint = Muted)
+                            // Photos are saved apart from the camera; this is the only sign that some are still on their way.
+                            if (pendingSaves > 0) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .5f)),
+                                contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = Lime, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            }
                         }
                         Shutter(enabled = !busy && gradeReady && (status.ready || imported != null), busy = busy, countdown = countdown,
                             importing = imported != null, onClick = ::triggerShutter)

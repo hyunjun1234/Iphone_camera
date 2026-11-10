@@ -106,7 +106,10 @@ class CameraUsabilityTest {
             compose.waitUntil(30_000) { prefs.getString("latest", null) != null }
             waitForCamera()
             compose.onNodeWithText("원본 비교", substring = true).assertIsDisplayed()
-            compose.onNodeWithText("원본과 보정한 사진을 갤러리에 저장했어요.").assertIsDisplayed()
+            // Saving runs apart from the camera, so its notice follows the saved file by a moment.
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("원본과 보정한 사진을 갤러리에 저장했어요.").fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithTag("original-compare").performClick()
             compose.onNodeWithText("색감 보기", substring = true).assertIsDisplayed()
             scenario.moveToState(Lifecycle.State.CREATED)

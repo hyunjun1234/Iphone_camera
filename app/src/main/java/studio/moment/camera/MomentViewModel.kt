@@ -23,9 +23,11 @@ import kotlinx.coroutines.withContext
 import studio.moment.camera.camera.CameraEngine
 import studio.moment.camera.color.ColorLut
 import studio.moment.camera.color.compositeOnWhite
+import studio.moment.camera.data.PhotoSaver
 import studio.moment.camera.data.PhotoStore
 import studio.moment.camera.data.PreferenceStore
 import studio.moment.camera.data.Preferences
+import studio.moment.camera.data.QueueEvent
 import studio.moment.camera.data.userMessage
 import java.io.File
 
@@ -61,9 +63,30 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
     val importOriginal = mutableImportOriginal.asStateFlow()
     private var captureJob: Job? = null
     private var importJob: Job? = null
+    private val saver = PhotoSaver.queue(app)
+    /** Photos taken but not yet in the gallery. Saving them never blocks the shutter. */
+    val pendingSaves = saver.pending
 
     init {
         viewModelScope.launch { runCatching { photos.cleanStaleWork() } }
+        viewModelScope.launch {
+            saver.events.collect { event ->
+                when (event) {
+                    is QueueEvent.Saved -> {
+                        mutableLatest.value = event.result.uri
+                        // One notice per burst instead of one per photo.
+                        if (event.result.unprocessed) notice("색감을 적용하지 못해 촬영한 그대로 저장했어요.")
+                        else if (event.remaining == 0) notice(when {
+                            event.savedTogether > 1 -> "사진 ${event.savedTogether}장을 갤러리에 저장했어요."
+                            event.result.original != null -> "원본과 보정한 사진을 갤러리에 저장했어요."
+                            else -> "보정한 사진을 갤러리에 저장했어요."
+                        })
+                    }
+                    is QueueEvent.Failed -> notice(userMessage(event.error,
+                        "사진을 저장하지 못했어요. 저장 공간을 확인해 주세요. 앱을 다시 열면 다시 저장해요."))
+                }
+            }
+        }
         viewModelScope.launch {
             combine(mutablePreferences.map { it.grade }.distinctUntilChanged(), mutableImportOriginal) { grade, original -> grade to original }
                 .collectLatest { (grade, original) ->
@@ -120,7 +143,6 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
     fun capture(engine: CameraEngine) {
         if (mutableBusy.value || !mutableGradeReady.value || !engine.status.value.ready) return
         val settings = mutablePreferences.value
-        val snapshotLut = mutableLut.value
         setStage(if (settings.timer > 0) WorkStage.COUNTDOWN else WorkStage.CAPTURING)
         captureJob = viewModelScope.launch {
             var source: File? = null
@@ -130,13 +152,13 @@ class MomentViewModel(app: Application) : AndroidViewModel(app) {
                 setStage(WorkStage.CAPTURING)
                 val captured = engine.takePicture(engine.status.value.frontFacing && settings.mirrorSelfie)
                 source = captured.file
-                setStage(WorkStage.SAVING)
-                val result = photos.export(source, snapshotLut, settings.grade, settings.saveOriginal, captured.frame, settings.photoQuality)
-                mutableLatest.value = result.uri; storage.latestUri = result.uri.toString()
-                notice(if (result.original != null) "원본과 보정한 사진을 갤러리에 저장했어요." else "보정한 사진을 갤러리에 저장했어요.")
+                // The style chosen at this moment travels with the photo; colour and saving happen apart
+                // from the camera so the next shot can be taken straight away.
+                saver.add(captured.file, settings.grade, settings.saveOriginal, captured.frame, settings.photoQuality)
+                source = null
             } catch (cancel: CancellationException) { throw cancel }
             catch (e: OutOfMemoryError) { notice(userMessage(e, "사진을 처리하지 못했어요.")) }
-            catch (e: Exception) { notice(userMessage(e, "사진을 저장하지 못했어요. 저장 공간을 확인하고 다시 촬영해 주세요.")) }
+            catch (e: Exception) { notice(userMessage(e, "사진을 촬영하지 못했어요. 저장 공간을 확인하고 다시 촬영해 주세요.")) }
             finally { source?.delete(); mutableCountdown.value = 0; setStage(WorkStage.IDLE) }
         }
     }

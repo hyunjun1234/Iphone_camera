@@ -1,12 +1,15 @@
 package studio.moment.camera
 
 import android.Manifest
+import android.content.ContentUris
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.net.Uri
+import android.provider.MediaStore
 import android.util.Size
 import android.view.KeyEvent
 import androidx.compose.ui.geometry.Rect
@@ -17,6 +20,9 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isEnabled
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -28,10 +34,14 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
+import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import studio.moment.camera.color.GradeSettings
 import studio.moment.camera.data.PhotoQuality
+import studio.moment.camera.data.PhotoSaver
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -165,6 +175,61 @@ class CameraFlowTest {
                 compose.onNodeWithContentDescription("사진 비율 $label").performClick()
             }
         } } finally { saved.forEach { context.contentResolver.delete(it, null, null) } }
+    }
+
+    @Test fun theNextPhotoCanBeTakenWhileEarlierOnesAreStillBeingSaved() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        context.getSharedPreferences("moment", Context.MODE_PRIVATE).edit().clear().putBoolean("original", false).commit()
+        val before = savedPhotos(context)
+        // Large photos keep the save queue busy for seconds, as a burst does on a 12MP phone.
+        val large = File(context.cacheDir, "slow-save.jpg")
+        Bitmap.createBitmap(4500, 3000, Bitmap.Config.ARGB_8888).apply {
+            val row = IntArray(width)
+            for (y in 0 until height) {
+                for (x in row.indices) row[x] = android.graphics.Color.rgb((x * 7 + y * 3) % 256, (x + y * 5) % 256, (x * 3 + y) % 256)
+                setPixels(row, 0, width, 0, y, width, 1)
+            }
+            large.outputStream().use { compress(Bitmap.CompressFormat.JPEG, 95, it) }
+            recycle()
+        }
+        val queue = PhotoSaver.queue(context)
+        try { ActivityScenario.launch(MainActivity::class.java).use {
+            waitForCamera()
+            runBlocking {
+                repeat(4) { index ->
+                    val copy = File(context.cacheDir, "slow-save-$index.jpg").also { large.copyTo(it, overwrite = true) }
+                    queue.add(copy, GradeSettings("6s"), true, null, PhotoQuality.HIGH)
+                }
+            }
+            compose.onNodeWithContentDescription("사진 촬영").assertIsEnabled().performClick()
+            waitForCamera()
+            // The shutter is free again although the queue still holds the earlier photos and this one.
+            assertTrue("Saving should still be in progress when the shutter is ready again", queue.pending.value > 0)
+            val saving = SemanticsMatcher("says photos are being saved") {
+                it.config.getOrNull(SemanticsProperties.StateDescription)?.contains("저장 중") == true
+            }
+            compose.onNode(saving).assertIsDisplayed()
+            compose.onNodeWithContentDescription("사진 촬영").assertIsEnabled().performClick()
+            waitForCamera()
+            compose.waitUntil(180_000) { queue.pending.value == 0 }
+            // Four large photos with their originals, and the two camera photos.
+            assertEquals(10, (savedPhotos(context) - before).size)
+            compose.waitUntil(5_000) { compose.onAllNodes(saving).fetchSemanticsNodes().isEmpty() }
+        } } finally {
+            large.delete()
+            (savedPhotos(context) - before).forEach { context.contentResolver.delete(it, null, null) }
+        }
+    }
+
+    private fun savedPhotos(context: Context): Set<Uri> {
+        val photos = mutableSetOf<Uri>()
+        context.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?", arrayOf("MOMENT_%"), null)?.use { cursor ->
+            while (cursor.moveToNext()) photos += ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cursor.getLong(0))
+        }
+        return photos
     }
 
     /** The rear camera's largest 4:3 picture up to 4032x3024, which the standard photo quality requests. */
